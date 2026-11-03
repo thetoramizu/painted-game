@@ -1,8 +1,12 @@
-import { Component, DestroyRef, inject, input, output, viewChild, signal } from '@angular/core';
+import { Component, computed, effect, input, output, viewChild, signal } from '@angular/core';
 import { Point, Stroke } from '../core/models';
 import { paintStroke } from '../core/strokes-render';
 
+/** Générateur d'ids de traits : horodaté + sequenceur global (anti collision inter-joueurs via prefix playerId) */
 let strokeSeq = 0;
+export function nextStrokeId(playerId: string): string {
+  return `${playerId}-${Date.now().toString(36)}-${strokeSeq++}`;
+}
 
 /**
  * Toile de peinture collaborative.
@@ -48,24 +52,30 @@ export class PaintCanvas {
   private canvasEl = viewChild.required<HTMLCanvasElement>('canvas');
   private overlayEl = viewChild.required<HTMLCanvasElement>('overlay');
   private drawing = signal<Point[] | null>(null);
-  private destroyRef = inject(DestroyRef);
+
+  /** signature de l'état à rendre : nb de traits + id du dernier (l'undo change la signature sans changer la longueur) */
+  private strokesSig = computed(() => {
+    const arr = this.strokes();
+    return `${arr.length}:${arr[arr.length - 1]?.id ?? ''}`;
+  });
 
   constructor() {
-    // re-render quand la liste des traits change (traits distants, undo, nouvelle manche)
-    let prevLen = -1;
-    let prevSrc = null as HTMLCanvasElement | null;
-    const check = () => {
-      const arr = this.strokes();
-      const src = this.modelSource();
-      if (arr.length !== prevLen || src !== prevSrc) {
-        prevLen = arr.length;
-        prevSrc = src;
+    // re-render déclenché par les signaux (traits distants, undo, nouvelle manche, modèle)
+    // `allowSignalWrites` : redraw lit des signaux (drawing, showOverlay…) tout en étant dans un effet
+    let first = true;
+    effect(
+      () => {
+        const sig = this.strokesSig();
+        const src = this.modelSource();
+        void sig; void src;
+        if (first) {
+          first = false;
+          return; // le canvas est vierge au montage, rien à rendre
+        }
         this.redraw();
-      }
-      rafId = requestAnimationFrame(check);
-    };
-    const rafId = requestAnimationFrame(check);
-    this.destroyRef.onDestroy(() => cancelAnimationFrame(rafId));
+      },
+      { allowSignalWrites: true },
+    );
   }
 
   private toNorm(ev: PointerEvent): Point {
@@ -102,7 +112,7 @@ export class PaintCanvas {
     this.drawing.set(null);
     if (!pts || pts.length === 0) return;
     this.strokeDone.emit({
-      id: `s${Date.now().toString(36)}-${strokeSeq++}`,
+      id: nextStrokeId(this.myId()),
       playerId: this.myId(),
       color: this.color(),
       size: this.size(),

@@ -1,13 +1,11 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
-import { FormsModule } from '@angular/forms';
+import { Component, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { GameService } from '../core/game.service';
 import { MAX_PLAYERS } from '../core/models';
 
-/** Page d'accueil : choisir un pseudo puis créer ou rejoindre une room. */
+/** Page d'accueil : choisir un pseudo puis créer ou rejoindre une room. 100 % signaux, sans FormsModule. */
 @Component({
   selector: 'app-home',
-  imports: [FormsModule],
   template: `
     <div class="home">
       <h1>🎨 Paint Together</h1>
@@ -16,13 +14,13 @@ import { MAX_PLAYERS } from '../core/models';
       @if (!connected()) {
         <label class="field">
           <span>Serveur</span>
-          <input [(ngModel)]="serverUrl" placeholder="http://localhost:3000" />
+          <input [value]="serverUrl()" (input)="serverUrl.set(inp.value)" #inp />
         </label>
       }
 
       <label class="field">
         <span>Pseudo</span>
-        <input [(ngModel)]="name" maxlength="20" placeholder="Ton prénom" />
+        <input [value]="name()" maxlength="20" placeholder="Ton prénom" (input)="name.set(nInp.value.trimStart())" #nInp />
       </label>
 
       <button class="primary" [disabled]="busy()" (click)="create()">✨ Créer une partie</button>
@@ -30,8 +28,8 @@ import { MAX_PLAYERS } from '../core/models';
       <div class="divider">ou rejoindre avec un code</div>
 
       <div class="row">
-        <input class="code" [(ngModel)]="code" maxlength="4" placeholder="ABCD" (ngModelChange)="code = code.toUpperCase()" />
-        <button [disabled]="busy() || code.length !== 4" (click)="join()">Rejoindre</button>
+        <input class="code" [value]="code()" maxlength="4" placeholder="ABCD" (input)="onCode(cInp.value)" #cInp />
+        <button [disabled]="busy() || code().length !== 4" (click)="join()">Rejoindre</button>
       </div>
 
       @if (game.error(); as err) { <p class="error">{{ err }}</p> }
@@ -62,9 +60,9 @@ export class Home {
   private router = inject(Router);
 
   readonly max = MAX_PLAYERS;
-  name = '';
-  code = '';
-  serverUrl = localStorage.getItem('serverUrl') ?? 'http://localhost:3000';
+  name = signal('');
+  code = signal('');
+  serverUrl = signal(localStorage.getItem('serverUrl') ?? 'http://localhost:3000');
   busy = signal(false);
   connected = this.game.connected;
 
@@ -77,9 +75,14 @@ export class Home {
     });
   }
 
+  /** force les lettres majuscules sur le champ code */
+  onCode(v: string): void {
+    this.code.set(v.toUpperCase());
+  }
+
   private prep(): string | null {
-    localStorage.setItem('serverUrl', this.serverUrl);
-    if (!this.name.trim()) {
+    localStorage.setItem('serverUrl', this.serverUrl());
+    if (!this.name().trim()) {
       this.game.error.set('Donne-toi un pseudo 🙂');
       return 'no-name';
     }
@@ -90,15 +93,15 @@ export class Home {
     if (this.prep()) return;
     this.busy.set(true);
     this.game.error.set(null);
-    this.game.createRoom(this.name.trim(), this.serverUrl);
+    this.game.createRoom(this.name().trim(), this.serverUrl());
     setTimeout(() => this.busy.set(false), 2000);
   }
 
   join(): void {
-    if (this.prep() || this.code.length !== 4) return;
+    if (this.prep() || this.code().length !== 4) return;
     this.busy.set(true);
     this.game.error.set(null);
-    this.game.joinRoom(this.code, this.name.trim(), this.serverUrl);
+    this.game.joinRoom(this.code(), this.name().trim(), this.serverUrl());
     setTimeout(() => this.busy.set(false), 2000);
   }
 }

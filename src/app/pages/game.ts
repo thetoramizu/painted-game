@@ -1,14 +1,14 @@
-import { Component, DestroyRef, computed, effect, inject, input, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { Router } from '@angular/router';
 import { GameService } from '../core/game.service';
-import { ScoreService, renderModelToCanvas } from '../core/strokes-render';
+import { ScoreService, drawStrokesOffscreen } from '../core/strokes-render';
 import { drawModel } from '../core/model-generator';
 import { PaintCanvas } from './paint-canvas';
 import { Stroke } from '../core/models';
 
 /**
  * Page de jeu : lobby → manche chronométrée → résultats.
- * Toutes les infos viennent du serveur via GameService (source de vérité).
+ * 100 % signaux : pas de FormsModule/ngModel (les templates utilisent @if/@for).
  */
 @Component({
   selector: 'app-game',
@@ -17,7 +17,6 @@ import { Stroke } from '../core/models';
     <div class="layout">
       <header>
         <div class="brand">🎨 Paint Together</div>
-        <div class="code" *ngIf="false"></div>
         @if (game.roomCode(); as rc) {
           <span class="roomcode" (click)="copy()" title="Copier le code">{{ rc }} 📋</span>
         }
@@ -53,7 +52,10 @@ import { Stroke } from '../core/models';
           <aside class="side">
             <h3>Modèle à recopier</h3>
             <canvas #ref width="260" height="173" class="ref"></canvas>
-            <label class="toggle"><input type="checkbox" [(ngModel)]="overlayOn" /> Filigrane sur la toile</label>
+            <label class="toggle">
+              <input type="checkbox" [checked]="overlayOn()" (change)="overlayOn.set(refCheck.checked)" #refCheck />
+              Filigrane sur la toile
+            </label>
             <div class="brushes">
               <h4>Ton pinceau</h4>
               <div class="sizes">
@@ -75,7 +77,7 @@ import { Stroke } from '../core/models';
               [size]="size()"
               [strokes]="game.strokes()"
               [myId]="game.myId ?? ''"
-              [showOverlay]="overlayOn"
+              [showOverlay]="overlayOn()"
               [modelSource]="modelCanvas()"
               (strokeDone)="onStroke($event)"
               (undoRequest)="onUndo($event)"
@@ -94,7 +96,9 @@ import { Stroke } from '../core/models';
           <h2>Résultats de la manche</h2>
           <div class="compare">
             <img [src]="snapshot()" alt="votre œuvre" />
-            <img *ngIf="false" />
+            @if (modelCanvas(); as mc) {
+              <img [src]="modelThumb()" alt="modèle" />
+            }
           </div>
           <div class="score-big">{{ teamScore() }}%</div>
           <p class="verdict">{{ verdict() }}</p>
@@ -163,7 +167,7 @@ export class Game {
   phase = this.game.phase;
   sizes = [0.006, 0.012, 0.022];
   size = signal(0.012);
-  overlayOn = false;
+  overlayOn = signal(false);
 
   myColor = computed(() => this.game.players().find((p) => p.id === this.game.myId)?.color ?? '#888');
 
@@ -172,6 +176,7 @@ export class Game {
 
   remaining = signal(120);
   snapshotUrl = signal('');
+  modelThumbUrl = signal('');
 
   teamScore = computed(() => {
     const scores = Object.values(this.game.scores());
@@ -180,8 +185,11 @@ export class Game {
   });
 
   snapshot = this.snapshotUrl;
+  modelThumb = this.modelThumbUrl;
 
   localScore = signal(0);
+
+  private refCanvas = viewChild<HTMLCanvasElement>('ref');
 
   constructor() {
     // chrono basé sur endsAt (horloge serveur) — robuste aux décalages
@@ -203,33 +211,42 @@ export class Game {
       const ctx = c.getContext('2d')!;
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 600, 400);
       drawModel(ctx, model, 600, 400);
+      this.modelThumbUrl.set(c.toDataURL());
       this.modelCanvas.set(c);
-      queueMicrotask(() => this.paintReference(c));
+      // le canvas .ref n'est monté qu'en phase 'playing' → on attend sa disponibilité (signal)
+      effect(() => {
+        const ref = this.refCanvas();
+        if (ref) this.paintReference(ref, c);
+      });
     });
 
-    // à la fin de la manche : calcul du score + envoi au serveur
+    // à la fin de la manche : snapshot + calcul du score + envoi au serveur
     effect(() => {
       if (this.game.phase() === 'results') {
         const strokes = this.game.strokes();
         const src = this.modelCanvas();
         if (src && this.game.myId) {
+          // instantané de l'œuvre commune pour l'écran de résultats
+          const snap = document.createElement('canvas');
+          snap.width = 600; snap.height = 400;
+          const sctx = snap.getContext('2d')!;
+          sctx.fillStyle = '#fff'; sctx.fillRect(0, 0, 600, 400);
+          drawStrokesOffscreen(sctx, strokes, 600, 400);
+          this.snapshotUrl.set(snap.toDataURL());
+
           const value = this.scoreSvc.score(strokes, (ctx, w, h) => ctx.drawImage(src, 0, 0, w, h));
           this.localScore.set(value);
-          (this.game as any).socket?.emit?.('score', { value });
+          this.game.sendScore(value);
         }
       }
     });
   }
 
-  private paintReference(modelCanvas: HTMLCanvasElement): void {
-    // canvas de référence dans la sidebar (query direct, simple et suffisant ici)
-    setTimeout(() => {
-      const ref = document.querySelector<HTMLCanvasElement>('canvas.ref');
-      if (!ref) return;
-      const ctx = ref.getContext('2d')!;
-      ctx.clearRect(0, 0, ref.width, ref.height);
-      ctx.drawImage(modelCanvas, 0, 0, ref.width, ref.height);
-    });
+  private paintReference(ref: HTMLCanvasElement | null, modelCanvas: HTMLCanvasElement): void {
+    if (!ref) return;
+    const ctx = ref.getContext('2d')!;
+    ctx.clearRect(0, 0, ref.width, ref.height);
+    ctx.drawImage(modelCanvas, 0, 0, ref.width, ref.height);
   }
 
   onStroke(stroke: Stroke): void {

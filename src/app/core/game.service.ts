@@ -80,6 +80,11 @@ export class GameService {
     this.socket?.emit('undo', { strokeId });
   }
 
+  /** Envoie le score de similarité calculé localement (fin de manche) */
+  sendScore(value: number): void {
+    this.socket?.emit('score', { value });
+  }
+
   leave(): void {
     this.socket?.disconnect();
     this.socket = null;
