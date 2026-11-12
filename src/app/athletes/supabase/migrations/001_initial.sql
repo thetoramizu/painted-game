@@ -80,7 +80,7 @@ CREATE OR REPLACE FUNCTION get_room(p_code TEXT, p_pseudo TEXT)
 RETURNS TABLE (
   code    TEXT,
   status  TEXT,
-  mySeat  INTEGER,
+  "mySeat" INTEGER,
   players JSONB
 )
 LANGUAGE plpgsql
@@ -90,7 +90,7 @@ BEGIN
   SELECT
     r.code,
     r.status,
-    MAX(CASE WHEN rp.pseudo = p_pseudo THEN rp.seat END) AS mySeat,
+    MAX(CASE WHEN rp.pseudo = p_pseudo THEN rp.seat END) AS "mySeat",
     COALESCE(jsonb_agg(jsonb_build_object('pseudo', rp.pseudo, 'seat', rp.seat) ORDER BY rp.seat), '[]'::jsonb) AS players
   FROM rooms r
   LEFT JOIN room_players rp ON rp.room_code = r.code

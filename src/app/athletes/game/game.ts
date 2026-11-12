@@ -35,40 +35,44 @@ export class Game implements AfterViewInit, OnDestroy {
   private game?: Phaser.Game;
   private scene?: GameScene;
   private syncBoardEffect?: EffectRef;
+  private raceEffect?: EffectRef;
 
   ngAfterViewInit(): void {
     const code = this.route.snapshot.paramMap.get('code') ?? '';
     this.roomCode.set(code);
 
     // Si on arrive directement sur /jouer sans passer par le lobby,
-    // recharger les joueurs depuis le cache de la salle.
+    // recharger les joueurs et le siège du joueur courant depuis le cache de la salle.
     if (!this.raceService.setup()) {
-      const players = this.readCachedPlayers(code);
-      if (players.length >= 2) {
-        this.raceService.startSetup(code, players);
+      const cached = this.readCachedSnapshot(code);
+      if (cached && cached.players.length >= 2) {
+        this.raceService.startSetup(code, cached.players, cached.mySeat);
       }
     }
 
-    this.game = new Phaser.Game({
-      type: Phaser.CANVAS,
-      width: 800,
-      height: 480,
-      parent: this.elementRef.nativeElement.querySelector('.game-container') ?? this.elementRef.nativeElement,
-      scene: [GameScene],
-      backgroundColor: '#fff7e8',
-      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    // Surveiller l'apparition d'une course pour créer le canvas Phaser,
+    // et le détruire si la course s'arrête.
+    this.raceEffect = effect(() => {
+      const race = this.raceService.race();
+      if (race && !this.game) {
+        this.initPhaser();
+      } else if (!race && this.game) {
+        this.cleanupPhaser();
+      }
     });
 
-    this.game.events.once('ready', () => {
-      this.scene = this.game?.scene.getScene(GAME_SCENE_KEY) as GameScene | undefined;
-      this.syncBoard();
-    });
-
+    // Synchroniser le canvas dès que la course est en cours.
     this.syncBoardEffect = effect(() => {
-      this.syncBoard();
+      const race = this.raceService.race();
+      if (race && this.scene) {
+        this.syncBoard();
+      }
     });
+
     this.destroyRef.onDestroy(() => {
+      this.raceEffect?.destroy();
       this.syncBoardEffect?.destroy();
+      this.cleanupPhaser();
     });
   }
 
@@ -189,18 +193,43 @@ export class Game implements AfterViewInit, OnDestroy {
     this.scene.syncRacers(trackRacers, turnSeat, this.statusMessage());
   }
 
-  private readCachedPlayers(code: string): { seat: number; pseudo: string }[] {
+  private readCachedSnapshot(code: string): { players: { seat: number; pseudo: string }[]; mySeat: number } | null {
     try {
       const raw = localStorage.getItem(`athletes-room-snapshot:${code}`);
-      if (!raw) return [];
+      if (!raw) return null;
       const parsed: unknown = JSON.parse(raw);
       if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { players?: unknown }).players)) {
-        const players = (parsed as { players: { seat: number; pseudo: string }[] }).players;
-        return players.filter((player) => Number.isInteger(player.seat) && typeof player.pseudo === 'string');
+        const snapshot = parsed as { players: { seat: number; pseudo: string }[]; mySeat: number };
+        return { players: snapshot.players, mySeat: snapshot.mySeat };
       }
-      return [];
+      return null;
     } catch {
-      return [];
+      return null;
+    }
+  }
+
+  private initPhaser(): void {
+    this.game = new Phaser.Game({
+      type: Phaser.CANVAS,
+      width: 800,
+      height: 480,
+      parent: this.elementRef.nativeElement.querySelector('.game-container') ?? this.elementRef.nativeElement,
+      scene: [GameScene],
+      backgroundColor: '#fff7e8',
+      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+    });
+
+    this.game.events.once('ready', () => {
+      this.scene = this.game?.scene.getScene(GAME_SCENE_KEY) as GameScene | undefined;
+      this.syncBoard();
+    });
+  }
+
+  private cleanupPhaser(): void {
+    if (this.game) {
+      this.game.destroy(true);
+      this.game = undefined;
+      this.scene = undefined;
     }
   }
 }

@@ -26,6 +26,8 @@ export class Lobby implements OnInit {
 
   private readonly code = signal<string | null>(null);
 
+  private timer?: number;
+
   protected readonly slots = computed(() => {
     const snapshot = this.room();
     const currentCode = this.code();
@@ -52,9 +54,9 @@ export class Lobby implements OnInit {
     }
 
     this.roomService.savePseudo(code, pseudo);
-    void this.refresh(code, pseudo);
-    const timer = setInterval(() => void this.refresh(code, pseudo), POLL_INTERVAL_MS);
-    this.destroyRef.onDestroy(() => clearInterval(timer));
+    this.refresh(code, pseudo);
+    this.timer = setInterval(() => void this.refresh(code, pseudo), POLL_INTERVAL_MS);
+    this.destroyRef.onDestroy(() => clearInterval(this.timer));
   }
 
   protected async copyCode(): Promise<void> {
@@ -70,6 +72,10 @@ export class Lobby implements OnInit {
     try {
       const snapshot = await this.roomService.getRoom(code, pseudo);
       this.room.set(snapshot); this.accessError.set(null); this.refreshError.set(null);
+      if (snapshot.status === 'playing') {
+        clearInterval(this.timer);
+        void this.router.navigate(['/salon', code, 'jouer']);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Une erreur est survenue.';
       if (this.room()) {
@@ -91,7 +97,7 @@ export class Lobby implements OnInit {
         // Préparer la course localement : joueurs triés, « nous » en premier.
         const players = [...snapshot.players]
           .sort((a, b) => (a.seat === snapshot.mySeat ? -1 : b.seat === snapshot.mySeat ? 1 : a.seat - b.seat));
-        this.raceService.startSetup(code, players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })));
+        this.raceService.startSetup(code, players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })), snapshot.mySeat);
         await this.router.navigate(['/salon', code, 'jouer']);
       } else {
         window.alert(result.message || 'Impossible de commencer la course.');

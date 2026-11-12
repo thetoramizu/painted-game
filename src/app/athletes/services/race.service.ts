@@ -36,8 +36,10 @@ export class RaceService {
   readonly setup = this.setupSignal.asReadonly();
   readonly race = this.raceSignal.asReadonly();
 
-  /** Le premier joueur de la liste est toujours « nous » (pseudo du lobby). */
-  readonly mySeat = computed(() => this.setupSignal()?.players[0]?.seat ?? 0);
+  private readonly currentSeat = signal<number>(0);
+
+  /** Le siège du joueur local (le créateur ou l'utilisateur connecté). */
+  readonly mySeat = computed(() => this.currentSeat());
 
   readonly myTurn = computed(() => {
     const race = this.raceSignal();
@@ -53,8 +55,8 @@ export class RaceService {
     return !storedPseudo || storedPseudo === setup.players[0].pseudo;
   }
 
-  /** Démarre la préparation de course depuis le lobby (premier joueur = nous). */
-  startSetup(code: string, players: RacePlayer[]): void {
+  /** Démarre la préparation de course depuis le lobby. */
+  startSetup(code: string, players: RacePlayer[], currentSeat: number = 0): void {
     const sorted = [...players].sort((a, b) => a.seat - b.seat);
     const stored = this.readStoredPicks(code);
     const picks: Record<number, AthleteId | null> = {};
@@ -64,6 +66,7 @@ export class RaceService {
     }
     this.raceSignal.set(null);
     this.setupSignal.set({ code, players: sorted, picks, phase: 'setup' });
+    this.currentSeat.set(currentSeat);
   }
 
   clear(): void {
@@ -83,7 +86,7 @@ export class RaceService {
     const setup = this.setupSignal();
     if (!setup || setup.phase !== 'setup') return;
     if (!this.isKnownAthlete(athleteId)) return;
-    const picks = { ...setup.picks, [setup.players[0].seat]: athleteId };
+    const picks = { ...setup.picks, [this.currentSeat()]: athleteId };
     this.setupSignal.set({ ...setup, picks });
     localStorage.setItem(PICKS_KEY_PREFIX + setup.code, JSON.stringify(picks));
   }
