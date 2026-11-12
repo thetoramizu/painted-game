@@ -1,1 +1,45 @@
-/* You can add global styles to this file, and also import other style files */
+:root {
+  --color-ink: #1f1d2b;
+  --color-primary: #c2331f;
+  --color-accent: #ffc83d;
+  --color-surface: #ffffff;
+  --color-background: #fff7e8;
+  --color-muted: #5b5870;
+  --color-border: #e6dcc8;
+  --color-danger: #a3261a;
+  --font-heading: 'Fredoka', system-ui, sans-serif;
+  --font-body: 'Nunito', system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-ink);
+  background: var(--color-background);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2 {
+  font-family: var(--font-heading);
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+button,
+input {
+  font-family: inherit;
+}

@@ -1,0 +1,65 @@
+<main class="lobby">
+  @if (accessError()) {
+    <section class="message-card">
+      <h1>Salle inaccessible</h1>
+      <p>{{ accessError() }}</p>
+      <a routerLink="/" class="btn btn-primary">Retour à l'accueil</a>
+    </section>
+  } @else if (room(); as snapshot) {
+    <header class="lobby-header">
+      <p class="eyebrow">Salle d'attente</p>
+      <h1>Qui court aujourd'hui ?</h1>
+      <p class="intro">
+        Partagez ce code avec vos amis. Ils le saisissent sur l'accueil pour rejoindre la salle.
+      </p>
+    </header>
+
+    <section class="code-card">
+      <span class="code-label">Code de la salle</span>
+      <span class="code-value">{{ snapshot.code }}</span>
+      <button type="button" class="btn btn-secondary" (click)="copyCode()">
+        {{ copied() ? 'Code copié' : 'Copier le code' }}
+      </button>
+    </section>
+
+    @if (refreshError()) {
+      <p class="alert" role="alert">Connexion instable : {{ refreshError() }}</p>
+    }
+
+    <section class="seats" aria-label="Joueurs">
+      @for (slot of slots(); track slot.seat) {
+        <article class="seat" [class.seat-empty]="!slot.pseudo" [class.seat-me]="slot.isMe">
+          <span class="seat-number">Joueur {{ slot.seat + 1 }}</span>
+          @if (slot.pseudo) {
+            <strong class="seat-name">{{ slot.pseudo }}</strong>
+            @if (slot.isMe) {
+              <span class="seat-tag">Vous</span>
+            }
+          } @else {
+            <span class="seat-waiting">En attente…</span>
+          }
+        </article>
+      }
+    </section>
+
+
+
+    <div class="action-bar">
+      @if (snapshot.mySeat === 0 && snapshot.players.length >= 2) {
+        <button type="button" class="btn btn-primary" (click)="startGame()">
+          Commencer la course
+        </button>
+      }
+    </div>
+
+    <p class="status">
+      @if (snapshot.players.length < 2) {
+        Il faut au moins 2 joueurs pour commencer la course.
+      } @else {
+        {{ snapshot.players.length }} joueurs sont prêts.
+      }
+    </p>
+  } @else {
+    <p class="loading">Chargement de la salle…</p>
+  }
+</main>

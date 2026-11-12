@@ -1,0 +1,68 @@
+<main class="home">
+  <header class="hero">
+    <p class="eyebrow">Jeu de course farfelue</p>
+    <h1>Athlètes de compète</h1>
+    <p class="intro">
+      Créez une salle, partagez le code avec vos amis et lancez la course à 2, 3 ou 4 joueurs.
+    </p>
+  </header>
+
+  @if (error()) {
+    <p class="alert" role="alert">{{ error() }}</p>
+  }
+
+  <section class="panels">
+    <form class="panel" (ngSubmit)="create()">
+      <h2>Créer une salle</h2>
+      <p>Vous serez le premier joueur de la salle.</p>
+      <label>
+        Votre pseudo
+        <input
+          name="createPseudo"
+          maxlength="20"
+          required
+          autocomplete="nickname"
+          [ngModel]="createPseudo()"
+          (ngModelChange)="createPseudo.set($event)"
+        />
+      </label>
+      <button type="submit" class="btn btn-primary" [disabled]="busy() || !createPseudo().trim()">
+        Créer la salle
+      </button>
+    </form>
+
+    <form class="panel" (ngSubmit)="join()">
+      <h2>Rejoindre une salle</h2>
+      <p>Entrez le code à 6 caractères donné par votre ami.</p>
+      <label>
+        Code de la salle
+        <input
+          name="joinCode"
+          maxlength="6"
+          required
+          autocomplete="off"
+          class="code-input"
+          [ngModel]="joinCode()"
+          (ngModelChange)="joinCode.set($event.toUpperCase())"
+        />
+      </label>
+      <label>
+        Votre pseudo
+        <input
+          name="joinPseudo"
+          maxlength="20"
+          required
+          autocomplete="nickname"
+          [(ngModel)]="joinPseudo"
+        />
+      </label>
+      <button
+        type="submit"
+        class="btn btn-secondary"
+        [disabled]="busy() || joinCode().trim().length !== 6 || !joinPseudo.trim()"
+      >
+        Rejoindre
+      </button>
+    </form>
+  </section>
+</main>
