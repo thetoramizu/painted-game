@@ -1,4 +1,4 @@
-﻿import { Service } from '@angular/core';
+﻿import { Injectable, signal } from '@angular/core';
 import { supabase } from '../core/supabase-client';
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
@@ -15,6 +15,8 @@ export interface RoomSnapshot {
   players: RoomPlayer[];
 }
 
+const SNAPSHOT_KEY_PREFIX = 'athletes-room-snapshot:';
+
 export interface RoomSession {
   code: string;
   token: string;
@@ -24,8 +26,11 @@ export interface RoomSession {
 const TOKEN_KEY_PREFIX = 'athletes-room-token:';
 const UNKNOWN_ERROR = 'Une erreur est survenue. Réessayez.';
 
-@Service()
+@Injectable({ providedIn: 'root' })
 export class RoomService {
+  private readonly snapshotSignal = signal<RoomSnapshot | null>(null);
+  readonly snapshot = this.snapshotSignal.asReadonly();
+
   createRoom(pseudo: string): Promise<RoomSession> {
     return this.rpc<RoomSession>('create_room', { p_pseudo: pseudo }, isRoomSession);
   }
@@ -34,8 +39,15 @@ export class RoomService {
     return this.rpc<RoomSession>('join_room', { p_code: code, p_pseudo: pseudo }, isRoomSession);
   }
 
-  getRoom(code: string, pseudo: string): Promise<RoomSnapshot> {
-    return this.rpc<RoomSnapshot>('get_room', { p_code: code, p_pseudo: pseudo }, isRoomSnapshot);
+  async getRoom(code: string, pseudo: string): Promise<RoomSnapshot> {
+    const snapshot = await this.rpc<RoomSnapshot>('get_room', { p_code: code, p_pseudo: pseudo }, isRoomSnapshot);
+    this.snapshotSignal.set(snapshot);
+    try {
+      localStorage.setItem(SNAPSHOT_KEY_PREFIX + code, JSON.stringify(snapshot));
+    } catch {
+      // stockage non disponible : tant pis, le cache est un confort
+    }
+    return snapshot;
   }
 
   startRoom(code: string, pseudo: string): Promise<{ success: boolean; message: string }> {
