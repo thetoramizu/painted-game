@@ -3,7 +3,9 @@ import {
   Component,
   DestroyRef,
   ElementRef,
+  EffectRef,
   OnDestroy,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -32,6 +34,7 @@ export class Game implements AfterViewInit, OnDestroy {
 
   private game?: Phaser.Game;
   private scene?: GameScene;
+  private syncBoardEffect?: EffectRef;
 
   ngAfterViewInit(): void {
     const code = this.route.snapshot.paramMap.get('code') ?? '';
@@ -61,8 +64,12 @@ export class Game implements AfterViewInit, OnDestroy {
       this.syncBoard();
     });
 
-    const stop = this.raceService.race.subscribe(() => this.syncBoard());
-    this.destroyRef.onDestroy(stop);
+    this.syncBoardEffect = effect(() => {
+      this.syncBoard();
+    });
+    this.destroyRef.onDestroy(() => {
+      this.syncBoardEffect?.destroy();
+    });
   }
 
   ngOnDestroy(): void {

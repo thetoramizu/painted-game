@@ -109,7 +109,7 @@ export class GameScene extends Scene {
   private createToken(racer: TrackRacer): RacerToken {
     const { x, y } = trackPosition(racer.seat, racer.position, this.trackLength);
     const circle = this.add
-      .arc(x, y, TOKEN_RADIUS, 0, Math.PI * 2, PLAYER_COLORS[racer.seat % PLAYER_COLORS.length])
+      .arc(x, y, TOKEN_RADIUS, 0, Math.PI * 2, false)
       .setStrokeStyle(3, 0x1f1d2b, 0.25)
       .setDepth(2);
     const name = this.add
