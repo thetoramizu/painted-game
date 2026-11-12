@@ -1,6 +1,7 @@
 ﻿import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { RoomService, RoomSnapshot } from '../services/room.service';
+import { RaceService } from '../services/race.service';
 
 const POLL_INTERVAL_MS = 2500;
 const SEATS = [0, 1, 2, 3];
@@ -15,6 +16,7 @@ export class Lobby implements OnInit {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly roomService = inject(RoomService);
+  private readonly raceService = inject(RaceService);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly room = signal<RoomSnapshot | null>(null);
@@ -80,11 +82,16 @@ export class Lobby implements OnInit {
 
   protected async startGame(): Promise<void> {
     const code = this.code();
+    const snapshot = this.room();
     const pseudo = this.roomService.readPseudo(code ?? '');
-    if (!code || !pseudo) return;
+    if (!code || !pseudo || !snapshot) return;
     try {
       const result = await this.roomService.startRoom(code, pseudo);
       if (result.success) {
+        // Préparer la course localement : joueurs triés, « nous » en premier.
+        const players = [...snapshot.players]
+          .sort((a, b) => (a.seat === snapshot.mySeat ? -1 : b.seat === snapshot.mySeat ? 1 : a.seat - b.seat));
+        this.raceService.startSetup(code, players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })));
         await this.router.navigate(['/salon', code, 'jouer']);
       } else {
         window.alert(result.message || 'Impossible de commencer la course.');

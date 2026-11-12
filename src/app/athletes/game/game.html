@@ -1,0 +1,103 @@
+<main class="race">
+  @if (raceService.setup(); as setup) {
+    @if (setup.phase === 'setup') {
+      <header class="race-header">
+        <p class="eyebrow">Salle {{ roomCode() }}</p>
+        <h1>Choisis ton athlète</h1>
+        <p class="intro">Chaque joueur sélectionne son athlète, puis la course peut commencer.</p>
+      </header>
+
+      <section class="athletes" aria-label="Athlètes">
+        @for (athlete of raceService.athletes; track athlete.id) {
+          <button
+            type="button"
+            class="athlete-card"
+            [class.selected]="raceService.pickFor(mySeat()) === athlete.id"
+            (click)="pick(athlete.id)"
+          >
+            <strong>{{ athlete.name }}</strong>
+            <span>{{ athlete.power }}</span>
+          </button>
+        }
+      </section>
+
+      <div class="action-bar">
+        @if (raceService.allPicked()) {
+          <button type="button" class="btn btn-primary" (click)="launch()">Lancer la course</button>
+        } @else {
+          <p class="hint">Sélectionne un athlète pour continuer.</p>
+        }
+      </div>
+    } @else if (raceService.race(); as race) {
+      <header class="race-header compact">
+        <h1>Athlètes de compète</h1>
+        <p class="intro">{{ statusMessage() }}</p>
+      </header>
+
+      <div class="board">
+        <div #gameContainer class="game-container"></div>
+
+        <aside class="side-panel">
+          @if (lastRollLabel()) {
+            <div class="dice" [class.rolling]="rolling()">{{ lastRollLabel() }}</div>
+          }
+          <div class="turn-actions">
+            @if (isMyTurn()) {
+              <button type="button" class="btn btn-primary" [disabled]="rolling()" (click)="rollDice()">
+                Lancer le dé
+              </button>
+              @if (myAthleteId() === 'genie') {
+                <button type="button" class="btn btn-secondary" [disabled]="rolling()" (click)="useJog()">
+                  Pouvoir : avancer de 5
+                </button>
+              }
+            } @else {
+              <p class="hint">Aux autres joueurs de jouer…</p>
+            }
+          </div>
+
+          <ol class="standings">
+            @for (racer of rankedRacers(); track racer.seat) {
+              <li class="standings-row" [class.is-turn]="race.turnSeat === racer.seat && race.phase === 'playing'">
+                <span class="dot" [style.background]="colorHex(racer.seat)"></span>
+                <span class="name">{{ racer.pseudo }}</span>
+                <span class="pos">
+                  @if (racer.finishRank !== null) {
+                    {{ ordinal(racer.finishRank) }} · {{ raceService.pointsOf(racer) }} pts
+                  } @else {
+                    Case {{ racer.position }} / {{ raceService.trackLength }}
+                    @if (racer.bronze > 0) {
+                      · Bronze ×{{ racer.bronze }}
+                    }
+                  }
+                </span>
+              </li>
+            }
+          </ol>
+
+          @if (race.phase === 'finished') {
+            <div class="finish-card">
+              <h2>Course terminée !</h2>
+              <a routerLink="/" class="btn btn-primary" (click)="backHome()">Retour à l'accueil</a>
+            </div>
+          }
+        </aside>
+      </div>
+
+      <details class="events">
+        <summary>Journal de la course</summary>
+        <ul>
+          @for (event of raceEvents(); track $index) {
+            <li>{{ event }}</li>
+          }
+        </ul>
+      </details>
+    }
+  } @else {
+    <section class="message-card">
+      <h1>Pas de course en cours</h1>
+      <p>Lance la course depuis une salle d'attente pour jouer ici.</p>
+      <a routerLink="/" class="btn btn-primary">Retour à l'accueil</a>
+    </section>
+  }
+</main>
