@@ -20,6 +20,12 @@
       <button type="button" class="btn btn-secondary" (click)="copyCode()">
         {{ copied() ? 'Code copié' : 'Copier le code' }}
       </button>
+
+      <!-- Après la ligne du bouton copier -->
+      <div class="back-home-button">
+        <button type="button" class="btn btn-outline" (click)="goHome()">Retour à l'accueil</button>
+      </div>
+
     </section>
 
     @if (refreshError()) {
@@ -34,6 +40,9 @@
             <strong class="seat-name">{{ slot.pseudo }}</strong>
             @if (slot.isMe) {
               <span class="seat-tag">Vous</span>
+            }
+            @if (slot.athleteId) {
+              <span class="seat-character">{{ slot.athleteId }}</span>
             }
           } @else {
             <span class="seat-waiting">En attente…</span>

@@ -1,6 +1,7 @@
 import { computed, Injectable, signal } from '@angular/core';
 import { ATHLETES, type Athlete, type AthleteId } from '../models/athletes';
 import { createRace, playTurn, racerPoints, TRACK_LENGTH, type RaceState } from '../models/race-engine';
+import { RoomService } from './room.service';
 
 export interface RacePlayer {
   seat: number;
@@ -18,8 +19,6 @@ export interface RaceSetupState {
   picks: Record<number, AthleteId | null>;
   phase: 'setup' | 'race';
 }
-
-const PICKS_KEY_PREFIX = 'athletes-race-picks:';
 
 /**
  * Orchestration locale de la course : choix des athlètes puis déroulement
@@ -48,6 +47,8 @@ export class RaceService {
     return race.turnSeat === this.mySeat();
   });
 
+  constructor(private readonly roomService: RoomService) {}
+
   private isLocalHost(): boolean {
     const setup = this.setupSignal();
     if (!setup) return false;
@@ -56,15 +57,18 @@ export class RaceService {
   }
 
   /** Démarre la préparation de course depuis le lobby. */
-  startSetup(code: string, players: RacePlayer[], currentSeat: number = 0): void {
+  async startSetup(code: string, players: RacePlayer[], currentSeat: number = 0): Promise<void> {
     const sorted = [...players].sort((a, b) => a.seat - b.seat);
-    const stored = this.readStoredPicks(code);
-    const picks: Record<number, AthleteId | null> = {};
-    for (const player of sorted) {
-      const value = stored[String(player.seat)];
-      picks[player.seat] = this.isKnownAthlete(value) ? value : null;
+    const picks = await this.fetchPicks(code);
+    // Validation : picks doit contenir des entrées (même si object, pas tableau)
+    // L'ancien check Array.isArray était incorrect pour un Record type
+    if (Object.keys(picks).length === 0) {
+      console.error('startSetup: fetchPicks n\'a retourné aucun pick', picks);
+      // Initialiser avec des picks par défaut (personne choisi)
+      this.setupSignal.set({ code, players: sorted, picks: {}, phase: 'setup' });
+      this.currentSeat.set(currentSeat);
+      return;
     }
-    this.raceSignal.set(null);
     this.setupSignal.set({ code, players: sorted, picks, phase: 'setup' });
     this.currentSeat.set(currentSeat);
   }
@@ -82,13 +86,18 @@ export class RaceService {
     return id ? this.athletes.find((athlete) => athlete.id === id) : undefined;
   }
 
+  /** Enregistrer le choix d'un athlète pour le joueur local et le diffuser à la salle. */
   selectAthlete(athleteId: AthleteId): void {
     const setup = this.setupSignal();
     if (!setup || setup.phase !== 'setup') return;
     if (!this.isKnownAthlete(athleteId)) return;
     const picks = { ...setup.picks, [this.currentSeat()]: athleteId };
+    // Enregistrer dans la base Supabase (fiable aussi si on bascule sur un autre onglet)
+    // On passe le siège au lieu du pseudo pour être robuste aux doublons de pseudo
+    this.roomService.updatePick(setup.code, this.currentSeat(), athleteId).catch(() => {
+      // En cas d'erreur, on continue avec le pick local
+    });
     this.setupSignal.set({ ...setup, picks });
-    localStorage.setItem(PICKS_KEY_PREFIX + setup.code, JSON.stringify(picks));
   }
 
   allPicked(): boolean {
@@ -146,17 +155,81 @@ export class RaceService {
   pointsOf = racerPoints;
   readonly trackLength = TRACK_LENGTH;
 
+  private roomPickSubscription?: (() => void)[];
+
+  /**
+   * Écouter les choix des autres joueurs en temps réel pour la salle.
+   * Quand un autre joueur choisit son athlète, le state local se met à jour.
+   */
+  subscribeToRoomPicks(code: string): void {
+    this.unsubscribeFromRoomPicks();
+
+    const callbacks = [
+      (seat: number, athleteId: string | null) => this.mergePickFromDb(seat, athleteId),
+    ];
+
+    this.roomPickSubscription = callbacks.map((cb) => {
+      return this.roomService.subscribeToRoomPicks(code, cb);
+    });
+  }
+
+  public unsubscribeFromRoomPicks(): void {
+    if (this.roomPickSubscription) {
+      this.roomPickSubscription.forEach((unsub) => unsub());
+      this.roomPickSubscription = undefined;
+    }
+  }
+
+  private mergePickFromDb(seat: number, athleteId: string | null): void {
+    const setup = this.setupSignal();
+    if (!setup) return;
+
+    const isKnown = this.isKnownAthlete(athleteId);
+    const newPicks = { ...setup.picks, [seat]: isKnown ? athleteId : null };
+    this.setupSignal.set({ ...setup, picks: newPicks });
+  }
+
+  private getMyPseudo(code: string, players: RacePlayer[]): string {
+    const storedPseudo = localStorage.getItem('athletes-room-token:' + code + ':pseudo');
+    if (storedPseudo) return storedPseudo;
+    const me = players.find((player) => player.seat === this.currentSeat());
+    return me?.pseudo ?? '';
+  }
+
   private isKnownAthlete(value: unknown): value is AthleteId {
     return typeof value === 'string' && ATHLETES.some((athlete) => athlete.id === value);
   }
 
-  private readStoredPicks(code: string): Record<string, unknown> {
-    try {
-      const raw = localStorage.getItem(PICKS_KEY_PREFIX + code);
-      const parsed: unknown = raw ? JSON.parse(raw) : {};
-      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
-    } catch {
-      return {};
-    }
+  /**
+   * Récupérer les choix d'athlètes déjà enregistrés en base pour la salle.
+   * Utilisé au chargement de la salle pour retrouver les choix des autres joueurs.
+   */
+  private fetchPicks(code: string): Promise<Record<number, AthleteId | null>> {
+    return this.roomService.getPicks(code).then((rows) => {
+      // Gérer le cas où rows est null, undefined ou un objet non-tableau
+      let rowsArray: { seat: number; athlete_id: string }[] = [];
+      if (Array.isArray(rows)) {
+        rowsArray = rows;
+      } else if (rows && typeof rows === 'object') {
+        // Si c'est un objet comme {0: null, 1: null}, convertir les valeurs en tableau
+        console.warn('fetchPicks: rows est un objet, conversion en tableau', rows);
+        // Casters en any pour contourner le typage strict d'Object.values sur unknown
+        rowsArray = Object.values(rows as any).filter((v: any) => v !== null && v !== undefined && typeof v === 'object') as { seat: number; athlete_id: string }[];
+      }
+
+      // Sécurité : rowsArray doit être un tableau valide
+      if (!Array.isArray(rowsArray) || rowsArray.length === 0) {
+        console.warn('fetchPicks: pas de données valides, retour de picks vides', rows);
+        const picks: Record<number, AthleteId | null> = {};
+        return picks;
+      }
+
+      const picks: Record<number, AthleteId | null> = {};
+      for (const row of rowsArray) {
+        const seat = row.seat;
+        picks[seat] = this.isKnownAthlete(row.athlete_id) ? row.athlete_id : null;
+      }
+      return picks;
+    });
   }
 }

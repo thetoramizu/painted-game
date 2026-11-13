@@ -1,9 +1,8 @@
-﻿import { Component, DestroyRef, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { RoomService, RoomSnapshot } from '../services/room.service';
 import { RaceService } from '../services/race.service';
 
-const POLL_INTERVAL_MS = 2500;
 const SEATS = [0, 1, 2, 3];
 
 @Component({
@@ -19,6 +18,17 @@ export class Lobby implements OnInit {
   private readonly raceService = inject(RaceService);
   private readonly destroyRef = inject(DestroyRef);
 
+  private roomPickSubscription: (() => void) | null = null;
+
+  private readonly roomPickCallback: (seat: number, pseudo: string | null, athleteId: string | null) => void = (
+    seat: number,
+    pseudo: string | null,
+    athleteId: string | null
+  ) => {
+    this.updateSeatAthlete(seat, pseudo, athleteId);
+    this.updateRoomPlayers(seat, pseudo, athleteId);
+  };
+
   protected readonly room = signal<RoomSnapshot | null>(null);
   protected readonly accessError = signal<string | null>(null);
   protected readonly refreshError = signal<string | null>(null);
@@ -26,17 +36,12 @@ export class Lobby implements OnInit {
 
   private readonly code = signal<string | null>(null);
 
-  private timer?: number;
-
-  protected readonly slots = computed(() => {
-    const snapshot = this.room();
-    const currentCode = this.code();
-    return SEATS.map((seat) => ({
-      seat,
-      pseudo: snapshot?.players.find((player) => player.seat === seat)?.pseudo ?? null,
-      isMe: snapshot?.mySeat === seat,
-    }));
-  });
+  protected readonly slots = signal<{
+    seat: number;
+    pseudo: string | null;
+    athleteId: string | null;
+    isMe: boolean;
+  }[]>([]);
 
   ngOnInit(): void {
     const code = this.route.snapshot.paramMap.get('code');
@@ -54,9 +59,34 @@ export class Lobby implements OnInit {
     }
 
     this.roomService.savePseudo(code, pseudo);
-    this.refresh(code, pseudo);
-    this.timer = setInterval(() => void this.refresh(code, pseudo), POLL_INTERVAL_MS);
-    this.destroyRef.onDestroy(() => clearInterval(this.timer));
+    // D'abord s'abonner aux changements en temps réel, THEN rafraîchir
+    // pour s'assurer de ne manquer aucun joueur qui aurait rejoint entre les deux opérations.
+    this.roomPickSubscription = this.roomService.subscribeToRoomPicks(
+      code,
+      this.roomPickCallback
+    );
+
+    // Maintenant rafraîchir le snapshot ; l'événement INSERT pour le créateur lui-même
+    // aura déjà été reçu via le channel, et refresh() chargera l'état actuel complet.
+    this.refresh(code, pseudo)
+      .then(() => {
+        const snapshot = this.room();
+        if (snapshot && snapshot.players) {
+          this.slots.set(SEATS.map((seat) => ({
+            seat,
+            pseudo: snapshot.players.find((player) => player.seat === seat)?.pseudo ?? null,
+            athleteId: snapshot.players.find((player) => player.seat === seat)?.athleteId ?? null,
+            isMe: snapshot.mySeat === seat,
+          })));
+        }
+      });
+
+    this.destroyRef.onDestroy(() => {
+      if (this.roomPickSubscription) {
+        this.roomPickSubscription();
+      }
+      this.roomPickSubscription = null;
+    });
   }
 
   protected async copyCode(): Promise<void> {
@@ -68,13 +98,70 @@ export class Lobby implements OnInit {
     }
   }
 
+  private updateSeatAthlete(seat: number, pseudo: string | null, athleteId: string | null): void {
+    console.log(`[lobby] updateSeatAthlete called: seat=${seat}, pseudo=${pseudo}, athleteId=${athleteId}, slotsBefore=${JSON.stringify(this.slots())}`);
+    this.slots.update(current => {
+      const index = current.findIndex(s => s.seat === seat);
+      console.log(`[lobby] slots findIndex result: ${index}, current before: ${JSON.stringify(current)}`);
+      if (index >= 0) {
+        // Retourne un nouveau tableau avec un nouvel objet à l'index : cela force la notification du signal
+        return [
+          ...current.slice(0, index),
+          { ...current[index], pseudo, athleteId },
+          ...current.slice(index + 1),
+        ];
+      } else {
+        // Nouvel ajout : création d'un nouveau tableau avec le nouvel objet
+        return [...current, { seat, pseudo, athleteId, isMe: false }];
+      }
+    });
+    console.log(`[lobby] slotsAfter=${JSON.stringify(this.slots())}`);
+  }
+
+  /**
+   * Met à jour le signal room avec le nouveau joueur ou le choix modifié.
+   * Assure que le bouton "Commencer" et le texte de statut se rafraîchissent.
+   */
+  private updateRoomPlayers(seat: number, pseudo: string | null, athleteId: string | null): void {
+    this.room.update(current => {
+      if (!current) return current;
+
+      const playerIndex = current.players.findIndex(p => p.seat === seat);
+      if (playerIndex >= 0) {
+        // Mise à jour d'un joueur existant à ce siège
+        return {
+          ...current,
+          players: [
+            ...current.players.slice(0, playerIndex),
+            {
+              ...current.players[playerIndex],
+              pseudo: pseudo ?? current.players[playerIndex].pseudo,
+              athleteId: athleteId ?? current.players[playerIndex].athleteId,
+            },
+            ...current.players.slice(playerIndex + 1),
+          ],
+        };
+      } else {
+        // Ajout d'un nouveau joueur
+        return {
+          ...current,
+          players: [
+            ...current.players,
+            { pseudo: pseudo ?? '', seat, athleteId: athleteId ?? null },
+          ],
+        };
+      }
+    });
+  }
+
   private async refresh(code: string, pseudo: string): Promise<void> {
     try {
       const snapshot = await this.roomService.getRoom(code, pseudo);
-      this.room.set(snapshot); this.accessError.set(null); this.refreshError.set(null);
+      this.room.set(snapshot);
+      this.accessError.set(null);
+      this.refreshError.set(null);
       if (snapshot.status === 'playing') {
-        clearInterval(this.timer);
-        void this.router.navigate(['/salon', code, 'jouer']);
+        // La course a commencé, le Realtime gère les mises à jour
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Une erreur est survenue.';
@@ -94,10 +181,9 @@ export class Lobby implements OnInit {
     try {
       const result = await this.roomService.startRoom(code, pseudo);
       if (result.success) {
-        // Préparer la course localement : joueurs triés, « nous » en premier.
         const players = [...snapshot.players]
           .sort((a, b) => (a.seat === snapshot.mySeat ? -1 : b.seat === snapshot.mySeat ? 1 : a.seat - b.seat));
-        this.raceService.startSetup(code, players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })), snapshot.mySeat);
+        await this.raceService.startSetup(code, players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })), snapshot.mySeat);
         await this.router.navigate(['/salon', code, 'jouer']);
       } else {
         window.alert(result.message || 'Impossible de commencer la course.');
@@ -106,4 +192,9 @@ export class Lobby implements OnInit {
       window.alert('Une erreur est survenue. Réessayez.');
     }
   }
+
+  protected async goHome(): Promise<void> {
+  await this.router.navigate(['/']);
+}
+
 }

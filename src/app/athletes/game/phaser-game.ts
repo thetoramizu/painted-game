@@ -36,6 +36,10 @@ export class GameScene extends Scene {
   private tokens = new Map<number, RacerToken>();
   private cellsGroup?: GameObjects.Group;
   private statusText?: GameObjects.Text;
+  private dieRect?: GameObjects.Rectangle;
+  private dieText?: GameObjects.Text;
+  private dieRolling = false;
+  private dieInterval?: number;
   private trackLength = 30;
 
   constructor() {
@@ -69,6 +73,21 @@ export class GameScene extends Scene {
         color: '#1f1d2b',
       })
       .setOrigin(0.5, 0.5);
+
+    // Dé animé
+    this.dieRect = this.add
+      .rectangle(TRACK_WIDTH / 2, TRACK_HEIGHT / 2, 96, 96, 0xffffff, 1)
+      .setStrokeStyle(4, 0x1f1d2b)
+      .setDepth(6);
+    this.dieText = this.add
+      .text(TRACK_WIDTH / 2, TRACK_HEIGHT / 2, '1', {
+        fontFamily: 'Fredoka, system-ui, sans-serif',
+        fontSize: 52,
+        color: '#1f1d2b',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(7);
   }
 
   syncRacers(racers: TrackRacer[], turnSeat: number | null, status: string): void {
@@ -130,5 +149,38 @@ export class GameScene extends Scene {
 
     const isTurn = turnSeat === racer.seat && !racer.finished;
     token.circle.setScale(isTurn ? 1.2 : 1).setAlpha(racer.finished ? 0.55 : 1);
+  }
+
+  /** Définir le chiffre affiché sur le dé ; stoppe toute animation en cours. */
+  setDieFace(face: number): void {
+    this.dieRolling = false;
+    this.dieText?.setText(face.toString());
+  }
+
+  /** Déclenche l'animation du dé (faces qui tournent, puis s'arrête sur le résultat). */
+  animateRoll(result: number): void {
+    // Interrompre toute animation en cours
+    if (this.dieRolling) {
+      window.clearInterval(this.dieInterval);
+      this.dieRolling = false;
+    }
+
+    this.dieRolling = true;
+    this.dieText?.setText('1');
+
+    let step = 0;
+    const totalSteps = 12;
+    const delayMs = 50;
+    this.dieInterval = window.setInterval(() => {
+      step += 1;
+      const face = 1 + Math.floor(Math.random() * 6);
+      this.dieText?.setText(face.toString());
+
+      if (step >= totalSteps) {
+        window.clearInterval(this.dieInterval);
+        this.dieRolling = false;
+        this.dieText?.setText(result.toString());
+      }
+    }, delayMs);
   }
 }
