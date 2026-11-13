@@ -10,7 +10,7 @@ const SEATS = [0, 1, 2, 3];
 
 @Component({
   selector: 'app-lobby',
-  imports: [RouterLink, AppBtn, AppAlert, AppMessageCard],
+  imports: [AppBtn, AppAlert, AppMessageCard],
   templateUrl: './lobby.html',
   styleUrl: './lobby.css',
 })

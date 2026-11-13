@@ -9,5 +9,5 @@ import { Component, input, signal } from '@angular/core';
   styles: []
 })
 export class AppAlert {
-  protected readonly message = input.required<string>();
+  readonly message = input.required<string>();
 }
