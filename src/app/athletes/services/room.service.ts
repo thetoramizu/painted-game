@@ -31,10 +31,42 @@ const UNKNOWN_ERROR = 'Une erreur est survenue. Réessayez.';
 export class RoomService {
   private readonly supabase = inject(SupabaseService).client;
   
-  private readonly snapshotSignal = signal<RoomSnapshot | null>(null);
+    private readonly snapshotSignal = signal<RoomSnapshot | null>(null);
   readonly snapshot = this.snapshotSignal.asReadonly();
 
+  /** Met à jour localement le snapshot avec les données reçues en temps réel */
+  private updateLocalPlayer(seat: number, pseudo: string | null, athleteId: string | null): void {
+    const current = this.snapshotSignal();
+    if (!current) return;
+
+    const playerExists = current.players.some((p) => p.seat === seat);
+    let updatedPlayers: RoomPlayer[];
+
+    if (playerExists) {
+      updatedPlayers = current.players.map((p) =>
+        p.seat === seat
+          ? { 
+              ...p, 
+              pseudo: pseudo ?? p.pseudo, 
+              athleteId: athleteId !== null ? athleteId : p.athleteId 
+            }
+          : p
+      );
+    } else {
+      updatedPlayers = [
+        ...current.players, 
+        { seat, pseudo: pseudo ?? '', athleteId: athleteId ?? null }
+      ];
+    }
+
+    this.snapshotSignal.set({
+      ...current,
+      players: updatedPlayers.sort((a, b) => a.seat - b.seat),
+    });
+  }
+
   createRoom(pseudo: string): Promise<RoomSession> {
+
     return this.rpc<RoomSession>('create_room', { p_pseudo: pseudo }, isRoomSession);
   }
 
@@ -70,11 +102,16 @@ export class RoomService {
    * Quand un autre joueur choisit, la callback est appelée avec (siège, athlète).
    * Retourne une fonction pour stopper l'écoute.
    */
-  subscribeToRoomPicks(
+    subscribeToRoomPicks(
     code: string,
-    callback: (seat: number, pseudo: string | null, athleteId: string | null) => void,
+    callback?: (seat: number, pseudo: string | null, athleteId: string | null) => void,
   ): (() => void) {
     const channel = this.supabase.channel(`room-picks-${code}`);
+
+    const handleUpdate = (seat: number, pseudo: string | null, athleteId: string | null) => {
+      this.updateLocalPlayer(seat, pseudo, athleteId);
+      if (callback) callback(seat, pseudo, athleteId);
+    };
 
     // Écouter les INSERT (nouveaux joueurs qui rejoignent la salle)
     channel.on('postgres_changes', {
@@ -83,17 +120,14 @@ export class RoomService {
       table: 'room_players',
       filter: `room_code=eq.${code}`,
     }, (payload) => {
-      // Extraction des données du changement de ligne Supabase
-      // utilisation de croquets car 'seat' et 'athlete_id' viennent d'index signatures
       const newSeat = payload.new?.['seat'];
       const newPseudo = payload.new?.['pseudo'];
       const newAthleteId = payload.new?.['athlete_id'];
-      // INSERT : athlete_id est NULL au moment du join, on ne le vérifie pas ici
-      // On diffuse quand on a le siège et le pseudo (le joueur vient de rejoindre)
+      
       if (newSeat !== undefined && newPseudo !== undefined) {
-        callback(newSeat, newPseudo as string | null, null);
+        handleUpdate(newSeat, newPseudo as string | null, null);
       } else if (newSeat !== undefined && newAthleteId !== undefined) {
-        callback(newSeat, null, newAthleteId as string | null);
+        handleUpdate(newSeat, null, newAthleteId as string | null);
       }
     });
 
@@ -104,14 +138,13 @@ export class RoomService {
       table: 'room_players',
       filter: `room_code=eq.${code}`,
     }, (payload) => {
-      // Extraction des données du changement de ligne Supabase
-      // utilisation de croquets car 'seat' et 'athlete_id' viennent d'index signatures
       const newSeat = payload.new?.['seat'];
       const newAthleteId = payload.new?.['athlete_id'];
       if (newSeat !== undefined && newAthleteId !== undefined) {
-        callback(newSeat, null, newAthleteId as string | null);
+        handleUpdate(newSeat, null, newAthleteId as string | null);
       }
     });
+
 
     // ← AJOUT : Souscrire au channel pour activer les événements en temps réel
     channel.subscribe((status) => {

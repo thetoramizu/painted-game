@@ -1,74 +1,109 @@
 <main class="lobby">
   @if (accessError()) {
-    <section class="message-card">
+    <app-message-card>
       <h1>Salle inaccessible</h1>
       <p>{{ accessError() }}</p>
-      <a routerLink="/" class="btn btn-primary">Retour à l'accueil</a>
-    </section>
+      <app-btn label="Retour à l'accueil" (clicked)="goHome()" />
+    </app-message-card>
   } @else if (room(); as snapshot) {
-    <header class="lobby-header">
-      <p class="eyebrow">Salle d'attente</p>
+        <header class="lobby-header">
+      <div class="header-top">
+        <app-btn 
+          label="Quitter" 
+          variant="ghost" 
+          (clicked)="goHome()" 
+        />
+        <p class="eyebrow">Salle d'attente</p>
+        <div style="width: 80px"></div> <!-- Spacer pour centrer l'eyebrow -->
+      </div>
       <h1>Qui court aujourd'hui ?</h1>
       <p class="intro">
-        Partagez ce code avec vos amis. Ils le saisissent sur l'accueil pour rejoindre la salle.
+        Partagez ce code avec vos amis pour qu'ils rejoignent la course.
       </p>
     </header>
 
     <section class="code-card">
       <span class="code-label">Code de la salle</span>
-      <span class="code-value">{{ snapshot.code }}</span>
-      <button type="button" class="btn btn-secondary" (click)="copyCode()">
-        {{ copied() ? 'Code copié' : 'Copier le code' }}
-      </button>
-
-      <!-- Après la ligne du bouton copier -->
-      <div class="back-home-button">
-        <button type="button" class="btn btn-outline" (click)="goHome()">Retour à l'accueil</button>
-      </div>
-
-    </section>
-
-    @if (refreshError()) {
-      <p class="alert" role="alert">Connexion instable : {{ refreshError() }}</p>
-    }
-
-    <section class="seats" aria-label="Joueurs">
-      @for (slot of slots(); track slot.seat) {
-        <article class="seat" [class.seat-empty]="!slot.pseudo" [class.seat-me]="slot.isMe">
-          <span class="seat-number">Joueur {{ slot.seat + 1 }}</span>
-          @if (slot.pseudo) {
-            <strong class="seat-name">{{ slot.pseudo }}</strong>
-            @if (slot.isMe) {
-              <span class="seat-tag">Vous</span>
-            }
-            @if (slot.athleteId) {
-              <span class="seat-character">{{ slot.athleteId }}</span>
-            }
+      <div class="code-display">
+        <span class="code-value">{{ snapshot.code }}</span>
+        <button type="button" class="copy-icon-btn" (click)="copyCode()" [title]="copied() ? 'Copié !' : 'Copier'">
+          @if (copied()) {
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-success"><polyline points="20 6 9 17 4 12"></polyline></svg>
           } @else {
-            <span class="seat-waiting">En attente…</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           }
-        </article>
+        </button>
+      </div>
+      @if (copied()) {
+        <span class="copy-toast">Copié dans le presse-papier !</span>
       }
     </section>
 
 
+    @if (refreshError()) {
+      <app-alert [message]="'Connexion instable : ' + refreshError()" />
+    }
+
+    <section class="seats" aria-labelledby="players-title">
+      <h2 id="players-title">Joueurs</h2>
+      <div class="seats-grid">
+        @for (slot of slots(); track slot.seat) {
+          <article class="seat" [class.seat-empty]="!slot.pseudo" [class.seat-me]="slot.isMe">
+            <div class="seat-status-icon">
+              @if (slot.pseudo) {
+                <span class="dot active"></span>
+              } @else {
+                <span class="dot pulse"></span>
+              }
+            </div>
+            <div class="seat-info">
+              <span class="seat-number">Joueur {{ slot.seat + 1 }}</span>
+              @if (slot.pseudo) {
+                <strong class="seat-name">
+                  {{ slot.pseudo }}
+                  @if (slot.isMe) { <span class="badge">Vous</span> }
+                </strong>
+                @if (slot.athleteId) {
+                  <span class="seat-character">{{ slot.athleteId }}</span>
+                }
+              } @else {
+                <span class="seat-waiting">En attente…</span>
+              }
+            </div>
+          </article>
+        }
+      </div>
+    </section>
 
     <div class="action-bar">
-      @if (snapshot.mySeat === 0 && snapshot.players.length >= 2) {
-        <button type="button" class="btn btn-primary" (click)="startGame()">
-          Commencer la course
-        </button>
+      @if (snapshot.mySeat === 0) {
+        <app-btn
+          label="Commencer la course"
+          loadingLabel="Démarrage..."
+          [loading]="isStarting()"
+          [disabled]="snapshot.players.length < 2"
+          (clicked)="startGame()"
+        />
+        
+        @if (snapshot.players.length < 2) {
+          <p class="status-hint">Il faut au moins 2 joueurs pour commencer</p>
+        }
+      } @else {
+        <div class="wait-message">
+          <span class="spinner-small"></span>
+          En attente du chef de salle...
+        </div>
       }
     </div>
 
-    <p class="status">
-      @if (snapshot.players.length < 2) {
-        Il faut au moins 2 joueurs pour commencer la course.
-      } @else {
-        {{ snapshot.players.length }} joueurs sont prêts.
-      }
-    </p>
+    @if (startError()) {
+      <app-alert [message]="startError()!" />
+    }
   } @else {
-    <p class="loading">Chargement de la salle…</p>
+    <div class="loading-state">
+      <span class="spinner"></span>
+      <p>Chargement de la salle…</p>
+    </div>
   }
 </main>
+
