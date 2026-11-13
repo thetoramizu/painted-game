@@ -103,62 +103,76 @@ export class RoomService {
    * Retourne une fonction pour stopper l'écoute.
    */
     subscribeToRoomPicks(
-    code: string,
-    callback?: (seat: number, pseudo: string | null, athleteId: string | null) => void,
-  ): (() => void) {
-    const channel = this.supabase.channel(`room-picks-${code}`);
+      code: string,
+      callback?: (seat: number, pseudo: string | null, athleteId: string | null) => void,
+      onStatusChange?: (status: RoomStatus) => void
+    ): (() => void) {
+      const channel = this.supabase.channel(`room-picks-${code}`);
 
-    const handleUpdate = (seat: number, pseudo: string | null, athleteId: string | null) => {
-      this.updateLocalPlayer(seat, pseudo, athleteId);
-      if (callback) callback(seat, pseudo, athleteId);
-    };
+      const handleUpdate = (seat: number, pseudo: string | null, athleteId: string | null) => {
+        this.updateLocalPlayer(seat, pseudo, athleteId);
+        if (callback) callback(seat, pseudo, athleteId);
+      };
 
-    // Écouter les INSERT (nouveaux joueurs qui rejoignent la salle)
-    channel.on('postgres_changes', {
-      event: 'INSERT',
-      schema: 'public',
-      table: 'room_players',
-      filter: `room_code=eq.${code}`,
-    }, (payload) => {
-      const newSeat = payload.new?.['seat'];
-      const newPseudo = payload.new?.['pseudo'];
-      const newAthleteId = payload.new?.['athlete_id'];
+      // Écouter les INSERT (nouveaux joueurs qui rejoignent la salle)
+      channel.on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'room_players',
+        filter: `room_code=eq.${code}`,
+      }, (payload) => {
+        const newSeat = payload.new?.['seat'];
+        const newPseudo = payload.new?.['pseudo'];
+        const newAthleteId = payload.new?.['athlete_id'];
       
-      if (newSeat !== undefined && newPseudo !== undefined) {
-        handleUpdate(newSeat, newPseudo as string | null, null);
-      } else if (newSeat !== undefined && newAthleteId !== undefined) {
-        handleUpdate(newSeat, null, newAthleteId as string | null);
-      }
-    });
+        if (newSeat !== undefined && newPseudo !== undefined) {
+          handleUpdate(newSeat, newPseudo as string | null, null);
+        } else if (newSeat !== undefined && newAthleteId !== undefined) {
+          handleUpdate(newSeat, null, newAthleteId as string | null);
+        }
+      });
 
-    // Écouter les UPDATE (mise à jour du choix d'athlète)
-    channel.on('postgres_changes', {
-      event: 'UPDATE',
-      schema: 'public',
-      table: 'room_players',
-      filter: `room_code=eq.${code}`,
-    }, (payload) => {
-      const newSeat = payload.new?.['seat'];
-      const newAthleteId = payload.new?.['athlete_id'];
-      if (newSeat !== undefined && newAthleteId !== undefined) {
-        handleUpdate(newSeat, null, newAthleteId as string | null);
-      }
-    });
+      // Écouter les UPDATE (mise à jour du choix d'athlète)
+      channel.on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'room_players',
+        filter: `room_code=eq.${code}`,
+      }, (payload) => {
+        const newSeat = payload.new?.['seat'];
+        const newAthleteId = payload.new?.['athlete_id'];
+        if (newSeat !== undefined && newAthleteId !== undefined) {
+          handleUpdate(newSeat, null, newAthleteId as string | null);
+        }
+      });
+
+      // Écouter les UPDATE (changement de statut de la salle)
+      channel.on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'rooms',
+        filter: `code=eq.${code}`,
+      }, (payload) => {
+        const newStatus = payload.new?.['status'] as RoomStatus;
+        if (newStatus && onStatusChange) {
+          onStatusChange(newStatus);
+        }
+      });
 
 
-    // ← AJOUT : Souscrire au channel pour activer les événements en temps réel
-    channel.subscribe((status) => {
-      // eslint-disable-next-line no-console
-      console.log(`[roomService] channel status for room-${code}: ${status}`);
-    });
-    return () => {
-      try {
-        channel.unsubscribe();
-      } catch {
-        // Déjà désinscrit
-      }
-    };
-  }
+      // ← AJOUT : Souscrire au channel pour activer les événements en temps réel
+      channel.subscribe((status) => {
+        // eslint-disable-next-line no-console
+        console.log(`[roomService] channel status for room-${code}: ${status}`);
+      });
+      return () => {
+        try {
+          channel.unsubscribe();
+        } catch {
+          // Déjà désinscrit
+        }
+      };
+    }
 
   startRoom(code: string, pseudo: string): Promise<{ success: boolean; message: string }> {
     return this.rpc<{ success: boolean; message: string }>('start_room', { p_code: code, p_pseudo: pseudo }, isStartRoom);

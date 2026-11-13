@@ -63,8 +63,16 @@ export class Lobby implements OnInit {
       return;
     }
 
-    // On s'abonne aux changements (le service gère maintenant la mise à jour du signal interne)
-    const unsubscribe = this.roomService.subscribeToRoomPicks(code);
+        // On s'abonne aux changements (le service gère maintenant la mise à jour du signal interne)
+    const unsubscribe = this.roomService.subscribeToRoomPicks(
+      code,
+      undefined,
+      (status) => {
+        if (status === 'playing') {
+          this.router.navigate(['/salon', code, 'jouer']);
+        }
+      }
+    );
     this.destroyRef.onDestroy(unsubscribe);
 
     try {
