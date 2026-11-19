@@ -2,23 +2,30 @@
 -- Athlètes de compète — Schéma Supabase
 -- ============================================
 
--- Table des salles de jeu
-CREATE TABLE IF NOT EXISTS rooms (
-  code          TEXT PRIMARY KEY,
-  status        TEXT NOT NULL DEFAULT 'lobby' CHECK (status IN ('lobby', 'playing', 'finished')),
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+-- Activation du Row Level Security (RLS)
+ALTER TABLE rooms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE room_players ENABLE ROW LEVEL SECURITY;
 
--- Table des joueurs inscrits dans une salle
-CREATE TABLE IF NOT EXISTS room_players (
-  id         BIGSERIAL PRIMARY KEY,
-  room_code  TEXT NOT NULL REFERENCES rooms(code) ON DELETE CASCADE,
-  pseudo     TEXT NOT NULL,
-  seat       INTEGER NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (room_code, seat)
-);
+-- Important : REPLICA IDENTITY FULL est requis pour que postgres_changes
+-- diffuse les colonnes NEW complètes (nécessaire pour les événements UPDATE)
+ALTER TABLE room_players REPLICA IDENTITY FULL;
 
+-- Policy : tout le monde peut lire les salles (nécessaire pour l'affichage du lobby)
+CREATE POLICY "rooms_select_public" ON rooms FOR SELECT TO public USING (true);
+
+-- Policy : seule la fonction create_room (via service_role) peut insérer une salle
+CREATE POLICY "rooms_insert_service" ON rooms FOR INSERT TO public WITH CHECK (auth.role() = 'service_role');
+
+-- Policy : tout le monde peut lire les joueurs d'une salle (nécessaire pour Realtime / lobby)
+CREATE POLICY "room_players_select_all" ON room_players FOR SELECT TO public USING (true);
+
+-- Policy : création d'un joueur via la fonction join_room ou create_room (s'exécute avec droits étendus)
+CREATE POLICY "room_players_insert_service" ON room_players FOR INSERT TO public WITH CHECK (auth.role() = 'service_role');
+
+-- Policy : mise à jour du choix d'athlète via la fonction set_pick (via service_role)
+CREATE POLICY "room_players_update_service" ON room_players FOR UPDATE TO public USING (auth.role() = 'service_role');
+
+-- Index
 CREATE INDEX IF NOT EXISTS idx_room_players_room ON room_players(room_code);
 
 -- ===========================
@@ -80,7 +87,7 @@ CREATE OR REPLACE FUNCTION get_room(p_code TEXT, p_pseudo TEXT)
 RETURNS TABLE (
   code    TEXT,
   status  TEXT,
-  mySeat  INTEGER,
+  "mySeat" INTEGER,
   players JSONB
 )
 LANGUAGE plpgsql
@@ -90,7 +97,7 @@ BEGIN
   SELECT
     r.code,
     r.status,
-    MAX(CASE WHEN rp.pseudo = p_pseudo THEN rp.seat END) AS mySeat,
+    MAX(CASE WHEN rp.pseudo = p_pseudo THEN rp.seat END) AS "mySeat",
     COALESCE(jsonb_agg(jsonb_build_object('pseudo', rp.pseudo, 'seat', rp.seat) ORDER BY rp.seat), '[]'::jsonb) AS players
   FROM rooms r
   LEFT JOIN room_players rp ON rp.room_code = r.code

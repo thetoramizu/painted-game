@@ -1,11 +1,12 @@
-﻿import { Injectable, signal } from '@angular/core';
-import { supabase } from '../core/supabase-client';
+import { inject, Injectable, signal } from '@angular/core';
+import { SupabaseService } from '../core/supabase-client';
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
 
 export interface RoomPlayer {
   pseudo: string;
   seat: number;
+  athleteId: string | null;
 }
 
 export interface RoomSnapshot {
@@ -28,10 +29,44 @@ const UNKNOWN_ERROR = 'Une erreur est survenue. Réessayez.';
 
 @Injectable({ providedIn: 'root' })
 export class RoomService {
-  private readonly snapshotSignal = signal<RoomSnapshot | null>(null);
+  private readonly supabase = inject(SupabaseService).client;
+  
+    private readonly snapshotSignal = signal<RoomSnapshot | null>(null);
   readonly snapshot = this.snapshotSignal.asReadonly();
 
+  /** Met à jour localement le snapshot avec les données reçues en temps réel */
+  private updateLocalPlayer(seat: number, pseudo: string | null, athleteId: string | null): void {
+    const current = this.snapshotSignal();
+    if (!current) return;
+
+    const playerExists = current.players.some((p) => p.seat === seat);
+    let updatedPlayers: RoomPlayer[];
+
+    if (playerExists) {
+      updatedPlayers = current.players.map((p) =>
+        p.seat === seat
+          ? { 
+              ...p, 
+              pseudo: pseudo ?? p.pseudo, 
+              athleteId: athleteId !== null ? athleteId : p.athleteId 
+            }
+          : p
+      );
+    } else {
+      updatedPlayers = [
+        ...current.players, 
+        { seat, pseudo: pseudo ?? '', athleteId: athleteId ?? null }
+      ];
+    }
+
+    this.snapshotSignal.set({
+      ...current,
+      players: updatedPlayers.sort((a, b) => a.seat - b.seat),
+    });
+  }
+
   createRoom(pseudo: string): Promise<RoomSession> {
+
     return this.rpc<RoomSession>('create_room', { p_pseudo: pseudo }, isRoomSession);
   }
 
@@ -50,6 +85,95 @@ export class RoomService {
     return snapshot;
   }
 
+  /** Récupérer les choix d'athlètes enregistrés pour une salle (par siège). */
+  getPicks(code: string): Promise<{ seat: number; athlete_id: string }[]> {
+    return this.rpc('get_picks', { p_code: code }, (data): data is { seat: number; athlete_id: string }[] => {
+      return Array.isArray(data);
+    }, true); // expectArray = true : on retourne le tableau complet
+  }
+
+  /** Enregistrer le choix d'un athlète pour un joueur (synchrone, via RPC). */
+  updatePick(code: string, seat: number, athleteId: string): Promise<void> {
+    return this.rpc('set_pick', { p_code: code, p_seat: seat, p_athlete_id: athleteId }, () => true);
+  }
+
+  /**
+   * Écouter les changements de choix d'athlètes en temps réel pour une salle.
+   * Quand un autre joueur choisit, la callback est appelée avec (siège, athlète).
+   * Retourne une fonction pour stopper l'écoute.
+   */
+    subscribeToRoomPicks(
+      code: string,
+      callback?: (seat: number, pseudo: string | null, athleteId: string | null) => void,
+      onStatusChange?: (status: RoomStatus) => void
+    ): (() => void) {
+      const channel = this.supabase.channel(`room-picks-${code}`);
+
+      const handleUpdate = (seat: number, pseudo: string | null, athleteId: string | null) => {
+        this.updateLocalPlayer(seat, pseudo, athleteId);
+        if (callback) callback(seat, pseudo, athleteId);
+      };
+
+      // Écouter les INSERT (nouveaux joueurs qui rejoignent la salle)
+      channel.on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'room_players',
+        filter: `room_code=eq.${code}`,
+      }, (payload) => {
+        const newSeat = payload.new?.['seat'];
+        const newPseudo = payload.new?.['pseudo'];
+        const newAthleteId = payload.new?.['athlete_id'];
+      
+        if (newSeat !== undefined && newPseudo !== undefined) {
+          handleUpdate(newSeat, newPseudo as string | null, null);
+        } else if (newSeat !== undefined && newAthleteId !== undefined) {
+          handleUpdate(newSeat, null, newAthleteId as string | null);
+        }
+      });
+
+      // Écouter les UPDATE (mise à jour du choix d'athlète)
+      channel.on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'room_players',
+        filter: `room_code=eq.${code}`,
+      }, (payload) => {
+        const newSeat = payload.new?.['seat'];
+        const newAthleteId = payload.new?.['athlete_id'];
+        if (newSeat !== undefined && newAthleteId !== undefined) {
+          handleUpdate(newSeat, null, newAthleteId as string | null);
+        }
+      });
+
+      // Écouter les UPDATE (changement de statut de la salle)
+      channel.on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'rooms',
+        filter: `code=eq.${code}`,
+      }, (payload) => {
+        const newStatus = payload.new?.['status'] as RoomStatus;
+        if (newStatus && onStatusChange) {
+          onStatusChange(newStatus);
+        }
+      });
+
+
+      // ← AJOUT : Souscrire au channel pour activer les événements en temps réel
+      channel.subscribe((status) => {
+        // eslint-disable-next-line no-console
+        console.log(`[roomService] channel status for room-${code}: ${status}`);
+      });
+      return () => {
+        try {
+          channel.unsubscribe();
+        } catch {
+          // Déjà désinscrit
+        }
+      };
+    }
+
   startRoom(code: string, pseudo: string): Promise<{ success: boolean; message: string }> {
     return this.rpc<{ success: boolean; message: string }>('start_room', { p_code: code, p_pseudo: pseudo }, isStartRoom);
   }
@@ -64,10 +188,11 @@ export class RoomService {
 
   private async rpc<T>(
     fn: string,
-    args: Record<string, string>,
-    isExpected: (data: unknown) => data is T,
+    args: Record<string, string | number>,
+    isExpected: (data: unknown) => boolean,
+    expectArray = false
   ): Promise<T> {
-    const { data, error } = await supabase.rpc(fn, args);
+    const { data, error } = await this.supabase.rpc(fn, args);
     if (error) {
       throw new Error(error.message || UNKNOWN_ERROR);
     }
@@ -75,7 +200,8 @@ export class RoomService {
       throw new Error(UNKNOWN_ERROR);
     }
     // Supabase retourne un tableau pour les fonctions RETURNS TABLE
-    return Array.isArray(data) ? (data[0] as T) : (data as T);
+    // Si expectArray=true, on retourne le tableau complet, sinon on prend data[0]
+    return expectArray ? (data as unknown as T) : (Array.isArray(data) ? (data[0] as T) : (data as T));
   }
 
   savePseudo(code: string, pseudo: string): void {

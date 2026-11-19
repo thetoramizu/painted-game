@@ -21,6 +21,20 @@
         }
       </section>
 
+      <!-- État des sièges de sélection -->
+      <section class="seats" aria-label="État des sièges">
+        @for (player of raceService.setup()?.players ?? []; track player.seat) {
+          <article class="seat" [class.seat-picked]="raceService.pickFor(player.seat)">
+            <span class="seat-number">Joueur {{ player.seat + 1 }}</span>
+            @if (raceService.pickFor(player.seat)) {
+              <strong class="seat-name">{{ raceService.athleteOf(raceService.pickFor(player.seat))?.name }}</strong>
+            } @else {
+              <span class="seat-waiting">En attente…</span>
+            }
+          </article>
+        }
+      </section>
+
       <div class="action-bar">
         @if (raceService.allPicked()) {
           <button type="button" class="btn btn-primary" (click)="launch()">Lancer la course</button>
