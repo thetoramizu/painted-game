@@ -2,6 +2,7 @@ import { inject, Injectable, signal } from '@angular/core';
 import { SupabaseService } from '../core/supabase-client';
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
+export type GameType = 'athletes' | 'paint';
 
 export interface RoomPlayer {
   pseudo: string;
@@ -12,6 +13,7 @@ export interface RoomPlayer {
 export interface RoomSnapshot {
   code: string;
   status: RoomStatus;
+  gameType: GameType;
   mySeat: number;
   players: RoomPlayer[];
 }
@@ -97,6 +99,20 @@ export class RoomService {
     return this.rpc('set_pick', { p_code: code, p_seat: seat, p_athlete_id: athleteId }, () => true);
   }
 
+  async updateGameType(code: string, pseudo: string, gameType: GameType): Promise<void> {
+    const result = await this.rpc<{ success: boolean; message: string }>(
+      'set_room_game',
+      { p_code: code, p_pseudo: pseudo, p_game_type: gameType },
+      isStartRoom
+    );
+    if (!result.success) throw new Error(result.message);
+
+    const current = this.snapshotSignal();
+    if (current?.code === code) {
+      this.snapshotSignal.set({ ...current, gameType });
+    }
+  }
+
   /**
    * Écouter les changements de choix d'athlètes en temps réel pour une salle.
    * Quand un autre joueur choisit, la callback est appelée avec (siège, athlète).
@@ -105,7 +121,7 @@ export class RoomService {
     subscribeToRoomPicks(
       code: string,
       callback?: (seat: number, pseudo: string | null, athleteId: string | null) => void,
-      onStatusChange?: (status: RoomStatus) => void
+      onStatusChange?: (status: RoomStatus, gameType: GameType | null) => void
     ): (() => void) {
       const channel = this.supabase.channel(`room-picks-${code}`);
 
@@ -153,9 +169,13 @@ export class RoomService {
         table: 'rooms',
         filter: `code=eq.${code}`,
       }, (payload) => {
-        const newStatus = payload.new?.['status'] as RoomStatus;
-        if (newStatus && onStatusChange) {
-          onStatusChange(newStatus);
+        const newStatus = payload.new?.['status'];
+        const newGameType = payload.new?.['game_type'];
+        if (isRoomStatus(newStatus)) {
+          if (isGameType(newGameType)) this.updateLocalGameType(code, newGameType);
+          onStatusChange?.(newStatus, isGameType(newGameType) ? newGameType : null);
+        } else if (isGameType(newGameType)) {
+          this.updateLocalGameType(code, newGameType);
         }
       });
 
@@ -176,6 +196,15 @@ export class RoomService {
 
   startRoom(code: string, pseudo: string): Promise<{ success: boolean; message: string }> {
     return this.rpc<{ success: boolean; message: string }>('start_room', { p_code: code, p_pseudo: pseudo }, isStartRoom);
+  }
+
+  async finishPaintGame(code: string, pseudo: string): Promise<void> {
+    const result = await this.rpc<{ success: boolean; message: string }>(
+      'finish_paint_game',
+      { p_code: code, p_pseudo: pseudo },
+      isStartRoom
+    );
+    if (!result.success) throw new Error(result.message);
   }
 
   saveToken(code: string, token: string): void {
@@ -204,6 +233,11 @@ export class RoomService {
     return expectArray ? (data as unknown as T) : (Array.isArray(data) ? (data[0] as T) : (data as T));
   }
 
+  private updateLocalGameType(code: string, gameType: GameType): void {
+    const current = this.snapshotSignal();
+    if (current?.code === code) this.snapshotSignal.set({ ...current, gameType });
+  }
+
   savePseudo(code: string, pseudo: string): void {
     localStorage.setItem(TOKEN_KEY_PREFIX + code + ':pseudo', pseudo);
   }
@@ -221,14 +255,28 @@ function isRoomSession(data: unknown): data is RoomSession {
 function isRoomSnapshot(data: unknown): data is RoomSnapshot {
   const value = Array.isArray(data) ? data[0] : data;
   return (
-    typeof value?.code === 'string' &&
-    typeof value?.status === 'string' &&
-    typeof value?.mySeat === 'number' &&
-    Array.isArray(value?.players)
+    isRecord(value) &&
+    typeof value['code'] === 'string' &&
+    isRoomStatus(value['status']) &&
+    isGameType(value['gameType']) &&
+    typeof value['mySeat'] === 'number' &&
+    Array.isArray(value['players'])
   );
 }
 
 function isStartRoom(data: unknown): data is { success: boolean; message: string } {
   const value = Array.isArray(data) ? data[0] : data;
-  return typeof value?.success === 'boolean' && typeof value?.message === 'string';
+  return isRecord(value) && typeof value['success'] === 'boolean' && typeof value['message'] === 'string';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isRoomStatus(value: unknown): value is RoomStatus {
+  return value === 'lobby' || value === 'playing' || value === 'finished';
+}
+
+function isGameType(value: unknown): value is GameType {
+  return value === 'athletes' || value === 'paint';
 }

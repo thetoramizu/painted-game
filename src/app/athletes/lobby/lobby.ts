@@ -1,6 +1,6 @@
 import { Component, DestroyRef, OnInit, inject, signal, computed } from '@angular/core';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
-import { RoomService } from '../services/room.service';
+import { RoomService, type GameType } from '../services/room.service';
 import { RaceService } from '../services/race.service';
 import { AppBtn } from '../shared/components/btn.component';
 import { AppAlert } from '../shared/components/alert.component';
@@ -25,8 +25,10 @@ export class Lobby implements OnInit {
   protected readonly accessError = signal<string | null>(null);
   protected readonly refreshError = signal<string | null>(null);
   protected readonly startError = signal<string | null>(null);
+  protected readonly gameTypeError = signal<string | null>(null);
   protected readonly copied = signal(false);
   protected readonly isStarting = signal(false);
+  protected readonly isChangingGame = signal(false);
 
   protected readonly slots = computed(() => {
     const snapshot = this.room();
@@ -67,9 +69,9 @@ export class Lobby implements OnInit {
     const unsubscribe = this.roomService.subscribeToRoomPicks(
       code,
       undefined,
-      (status) => {
+      (status, gameType) => {
         if (status === 'playing') {
-          this.router.navigate(['/salon', code, 'jouer']);
+          this.navigateToGame(code, gameType ?? this.room()?.gameType ?? 'athletes');
         }
       }
     );
@@ -107,17 +109,25 @@ export class Lobby implements OnInit {
     try {
       const result = await this.roomService.startRoom(code, pseudo);
       if (result.success) {
-        const players = [...snapshot.players]
-          .sort((a, b) => {
-            if (a.seat === snapshot.mySeat) return -1;
-            if (b.seat === snapshot.mySeat) return 1;
+        if (snapshot.gameType === 'athletes') {
+          const players = [...snapshot.players]
+            .sort((a, b) => {
+              if (a.seat === snapshot.mySeat) return -1;
+              if (b.seat === snapshot.mySeat) return 1;
 
-            return a.seat - b.seat;
-          });
-        await this.raceService.startSetup(code, players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })), snapshot.mySeat);
-        await this.router.navigate(['/salon', code, 'jouer']);
+              return a.seat - b.seat;
+            });
+          await this.raceService.startSetup(
+            code,
+            players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })),
+            snapshot.mySeat
+          );
+        }
+        await this.router.navigate(
+          snapshot.gameType === 'paint' ? ['/salon', code, 'peindre'] : ['/salon', code, 'jouer']
+        );
       } else {
-        this.startError.set(result.message || 'Impossible de commencer la course.');
+        this.startError.set(result.message || 'Impossible de commencer la partie.');
       }
     } catch (error) {
       console.error(error);
@@ -127,7 +137,29 @@ export class Lobby implements OnInit {
     }
   }
 
+  protected async selectGame(gameType: GameType): Promise<void> {
+    const code = this.code();
+    const pseudo = this.roomService.readPseudo(code ?? '');
+    if (!code || !pseudo || this.room()?.mySeat !== 0 || this.isChangingGame()) return;
+
+    this.isChangingGame.set(true);
+    this.gameTypeError.set(null);
+    try {
+      await this.roomService.updateGameType(code, pseudo, gameType);
+    } catch (error) {
+      this.gameTypeError.set(error instanceof Error ? error.message : 'Impossible de choisir ce jeu.');
+    } finally {
+      this.isChangingGame.set(false);
+    }
+  }
+
   protected async goHome(): Promise<void> {
     await this.router.navigate(['/']);
+  }
+
+  private navigateToGame(code: string, gameType: GameType): void {
+    void this.router.navigate(gameType === 'paint'
+      ? ['/salon', code, 'peindre']
+      : ['/salon', code, 'jouer']);
   }
 }

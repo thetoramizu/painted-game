@@ -16,9 +16,9 @@
         <p class="eyebrow">Salle d'attente</p>
         <div style="width: 80px"></div> <!-- Spacer pour centrer l'eyebrow -->
       </div>
-      <h1>Qui court aujourd'hui ?</h1>
+      <h1>Choisissez votre jeu</h1>
       <p class="intro">
-        Partagez ce code avec vos amis pour qu'ils rejoignent la course.
+        Partagez ce code avec vos amis, puis choisissez ensemble à quoi jouer.
       </p>
     </header>
 
@@ -44,6 +44,46 @@
       <app-alert [message]="'Connexion instable : ' + refreshError()" />
     }
 
+    <section class="game-choice" aria-labelledby="game-choice-title">
+      <h2 id="game-choice-title">Jeu de la salle</h2>
+      <div class="seats-grid game-options">
+        <button
+          type="button"
+          class="seat game-option"
+          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          (click)="selectGame('athletes')"
+        >
+          <div class="seat-info">
+            <strong>Athlètes de compète</strong>
+            <span>Une course loufoque à jouer chacun son tour.</span>
+            @if (snapshot.gameType === 'athletes') {
+              <span class="badge">Choisi</span>
+            }
+          </div>
+        </button>
+        <button
+          type="button"
+          class="seat game-option"
+          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          (click)="selectGame('paint')"
+        >
+          <div class="seat-info">
+            <strong>Toile collaborative</strong>
+            <span>Peignez ensemble, chacun avec sa couleur.</span>
+            @if (snapshot.gameType === 'paint') {
+              <span class="badge">Choisi</span>
+            }
+          </div>
+        </button>
+      </div>
+      @if (snapshot.mySeat !== 0) {
+        <p class="status-hint">Le chef de salle choisit le jeu.</p>
+      }
+      @if (gameTypeError()) {
+        <app-alert [message]="gameTypeError()!" />
+      }
+    </section>
+
     <section class="seats" aria-labelledby="players-title">
       <h2 id="players-title">Joueurs</h2>
       <div class="seats-grid">
@@ -63,7 +103,7 @@
                   {{ slot.pseudo }}
                   @if (slot.isMe) { <span class="badge">Vous</span> }
                 </strong>
-                @if (slot.athleteId) {
+                @if (snapshot.gameType === 'athletes' && slot.athleteId) {
                   <span class="seat-character">{{ slot.athleteId }}</span>
                 }
               } @else {
@@ -78,10 +118,10 @@
     <div class="action-bar">
       @if (snapshot.mySeat === 0) {
         <app-btn
-          label="Commencer la course"
+          [label]="snapshot.gameType === 'paint' ? 'Commencer à peindre' : 'Commencer la course'"
           loadingLabel="Démarrage..."
           [loading]="isStarting()"
-          [disabled]="snapshot.players.length < 2"
+          [disabled]="snapshot.players.length < 2 || isStarting() || isChangingGame()"
           (clicked)="startGame()"
         />
         

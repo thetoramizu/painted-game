@@ -1,0 +1,62 @@
+<main class="paint-game">
+  <header class="game-header">
+    <div>
+      <p class="eyebrow">Toile collaborative</p>
+      <h1>Peignez ensemble</h1>
+      <p class="session-code">Salle {{ roomCode() }}</p>
+    </div>
+    <button class="leave-button" type="button" (click)="leaveRoom()">Quitter la salle</button>
+  </header>
+
+  @if (sessionInfo(); as session) {
+    <section class="player-colors" aria-label="Couleurs des joueurs">
+      @for (player of session.players; track player.seat) {
+        <div class="color-chip">
+          <span class="color-preview" [style.backgroundColor]="player.color"></span>
+          <span>{{ player.pseudo }}</span>
+          @if (player.seat === session.mySeat) {
+            <span class="you-label">Vous</span>
+          }
+        </div>
+      }
+    </section>
+  }
+
+  <section class="canvas-card">
+    <div class="canvas-heading">
+      <p>Cliquez et faites glisser pour peindre. Les traits ne peuvent pas être effacés.</p>
+      @if (isLoading()) {
+        <span class="connection-status">Connexion à la toile…</span>
+      }
+    </div>
+    <canvas
+      #paintCanvas
+      class="paint-canvas"
+      width="1200"
+      height="720"
+      aria-label="Toile partagée"
+      (pointerdown)="startDrawing($event)"
+      (pointermove)="continueDrawing($event)"
+      (pointerup)="finishDrawing($event)"
+      (pointercancel)="finishDrawing($event)"
+    ></canvas>
+  </section>
+
+  @if (connectionError()) {
+    <p class="error-message" role="alert">{{ connectionError() }}</p>
+  }
+
+  <footer class="toolbar">
+    <p>La toile est conservée pendant la partie, puis remise à zéro par le chef de salle.</p>
+    @if (sessionInfo()?.mySeat === 0) {
+      <button
+        class="finish-button"
+        type="button"
+        [disabled]="isEnding()"
+        (click)="finishGame()"
+      >
+        {{ isEnding() ? 'Fin de partie…' : 'Terminer la partie' }}
+      </button>
+    }
+  </footer>
+</main>
