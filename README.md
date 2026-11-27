@@ -44,6 +44,20 @@ To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use th
 ng test
 ```
 
+## Dessin Mystère
+
+Le mini-jeu est disponible depuis le lobby. Ses migrations Supabase se trouvent dans
+`supabase/migrations/` et doivent être appliquées au projet lié avec
+`npx supabase db push`. Les mots français sont administrés dans `mystery_word_bank`; les délais
+(choix, dessin, récapitulatif et reconnexion) sont configurés dans `mystery_settings`.
+Les salons déjà créés avant cette migration doivent être recréés pour ce mode : l’ancien schéma ne
+persistait pas le jeton de joueur nécessaire à l’autorisation serveur.
+
+Les propositions et le mot secret sont conservés côté base de données. Le dessin apparaît
+immédiatement sur la toile du dessinateur, puis est synchronisé par événements validés côté serveur
+et rechargé depuis les événements persistés à la reconnexion. Aucune capture de toile n’est envoyée
+à chaque mouvement.
+
 ## Running end-to-end tests
 
 For end-to-end (e2e) testing, run:

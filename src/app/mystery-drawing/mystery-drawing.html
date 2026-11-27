@@ -1,0 +1,126 @@
+<main class="mystery-game">
+  <header class="game-header">
+    <div>
+      <p class="eyebrow">Jeu multijoueur</p>
+      <h1>Dessin Mystère</h1>
+      <p class="room-label">Salle {{ state()?.roomCode }}</p>
+    </div>
+    <button class="leave-button" type="button" (click)="leaveGame()">Retour au salon</button>
+  </header>
+
+  @if (loading()) {
+    <p class="loading-message">Connexion à la partie…</p>
+  } @else if (state(); as game) {
+    <section class="round-header">
+      <div class="round-count">Manche {{ game.round }}/{{ game.totalRounds }}</div>
+      @if (game.phase !== 'finished') {
+        <div class="timer" [class.low-time]="secondsRemaining() <= 10">
+          <strong>{{ secondsRemaining() }}</strong><span>secondes</span>
+        </div>
+      }
+      <div class="drawer-indicator">
+        <span>Au dessin</span>
+        <strong>{{ drawerName() }}</strong>
+      </div>
+      <div class="word-hint">
+        <span>{{ game.phase === 'summary' || game.phase === 'finished' ? 'Mot révélé' : 'Mot à deviner' }}</span>
+        <strong>{{ visibleWord() }}</strong>
+        @if (game.wordLength !== null && game.phase !== 'summary' && game.phase !== 'finished') {
+          <small>{{ game.wordLength }} lettres</small>
+        }
+      </div>
+    </section>
+
+    @if (game.phase === 'choosing') {
+      @if (isDrawer()) {
+        <app-word-choice
+          [words]="game.wordOptions"
+          [seconds]="secondsRemaining()"
+          [busy]="busy()"
+          (selected)="chooseWord($event)"
+        />
+      } @else {
+        <section class="waiting-choice" aria-live="polite">
+          <strong>{{ drawerName() }}</strong> choisit un mot secret…
+        </section>
+      }
+    }
+
+    @if (game.phase === 'summary' || game.phase === 'finished') {
+      <app-round-summary
+        [events]="game.events"
+        [players]="game.players"
+        [round]="game.round"
+        [totalRounds]="game.totalRounds"
+        [finished]="game.phase === 'finished'"
+      />
+      @if (game.phase === 'finished' && isHost()) {
+        <button class="return-button" type="button" [disabled]="busy()" (click)="returnToLobby()">
+          Retourner au salon
+        </button>
+      }
+    }
+
+    <div class="game-layout">
+      <section class="canvas-card">
+        <div class="canvas-heading">
+          <h2>Toile partagée</h2>
+          @if (game.phase === 'drawing') {
+            <p>
+              @if (isDrawer()) { Dessinez le mot sans l’écrire. }
+              @else if (found()) { Vous avez trouvé : observez le dessin jusqu’à la prochaine manche. }
+              @else { Proposez votre réponse dans la discussion. }
+            </p>
+          }
+        </div>
+        <app-drawing-canvas
+          [events]="game.events"
+          [roundIndex]="game.round"
+          [mySeat]="game.mySeat"
+          [canDraw]="isDrawer() && game.phase === 'drawing'"
+          [tool]="tool()"
+          [color]="color()"
+          [size]="brushSize()"
+          [toolbarAction]="toolbarAction()"
+          [resetVersion]="canvasResetVersion()"
+          (drawingAction)="drawAction($event)"
+        />
+        <app-drawing-toolbar
+          [disabled]="!isDrawer() || game.phase !== 'drawing'"
+          [selectedColor]="color()"
+          [selectedSize]="brushSize()"
+          [selectedTool]="tool()"
+          (colorChange)="color.set($event)"
+          (sizeChange)="brushSize.set($event)"
+          (toolChange)="tool.set($event)"
+          (action)="queueCanvasAction($event)"
+        />
+      </section>
+
+      <aside class="sidebar">
+        <app-players-list
+          [players]="game.players"
+          [drawerSeat]="game.drawerSeat"
+          [guessedSeats]="game.guessedSeats"
+          [drawnSeats]="game.drawnSeats"
+          [mySeat]="game.mySeat"
+          [phase]="game.phase"
+        />
+        <app-guess-chat
+          [events]="game.events"
+          [players]="game.players"
+          [currentRound]="game.round"
+          [disabled]="game.phase !== 'drawing'"
+          [found]="found()"
+          [drawer]="isDrawer()"
+          (guess)="submitGuess($event)"
+        />
+      </aside>
+    </div>
+    @if (error() || connectionError()) {
+      <p class="error-message" role="alert">{{ error() ?? connectionError() }}</p>
+    }
+  } @else if (error()) {
+    <p class="error-message" role="alert">{{ error() }}</p>
+  }
+</main>

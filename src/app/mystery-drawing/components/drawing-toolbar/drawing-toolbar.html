@@ -1,0 +1,55 @@
+<div class="toolbar" [class.disabled]="disabled" aria-label="Outils de dessin">
+  <div class="tool-group">
+    <button
+      type="button"
+      [class.active]="selectedTool === 'brush'"
+      [attr.aria-pressed]="selectedTool === 'brush'"
+      [disabled]="disabled"
+      (click)="toolChange.emit('brush')"
+    >Pinceau</button>
+    <button
+      type="button"
+      [class.active]="selectedTool === 'eraser'"
+      [attr.aria-pressed]="selectedTool === 'eraser'"
+      [disabled]="disabled"
+      (click)="toolChange.emit('eraser')"
+    >Gomme</button>
+    <button
+      type="button"
+      [class.active]="selectedTool === 'fill'"
+      [attr.aria-pressed]="selectedTool === 'fill'"
+      [disabled]="disabled"
+      (click)="toolChange.emit('fill')"
+    >Pot de peinture</button>
+  </div>
+  <div class="color-palette" aria-label="Palette de couleurs">
+    @for (color of colors; track color) {
+      <button
+        type="button"
+        class="color-swatch"
+        [style.backgroundColor]="color"
+        [class.selected]="selectedColor === color"
+        [attr.aria-label]="'Couleur ' + color"
+        [disabled]="disabled"
+        (click)="colorChange.emit(color)"
+      ></button>
+    }
+    <label class="custom-color" title="Couleur personnalisée">
+      <span>+</span>
+      <input type="color" [value]="selectedColor" [disabled]="disabled" (input)="colorChange.emit($any($event.target).value)" />
+    </label>
+  </div>
+  <label class="size-picker">
+    Taille
+    <select [value]="selectedSize.toString()" [disabled]="disabled" (change)="sizeChange.emit(+$any($event.target).value)">
+      @for (size of sizes; track size.value) {
+        <option [value]="size.value.toString()" [selected]="size.value === selectedSize">{{ size.label }}</option>
+      }
+    </select>
+  </label>
+  <div class="tool-group history-tools">
+    <button type="button" [disabled]="disabled" (click)="emitAction('undo')">Annuler</button>
+    <button type="button" [disabled]="disabled" (click)="emitAction('redo')">Rétablir</button>
+    <button type="button" [disabled]="disabled" (click)="emitAction('clear')">Tout effacer</button>
+  </div>
+</div>

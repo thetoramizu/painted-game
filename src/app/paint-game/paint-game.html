@@ -1,0 +1,126 @@
+<main class="paint-game">
+  <header class="game-header">
+    <div>
+      <p class="eyebrow">Toile collaborative</p>
+      <h1>
+        @if (phase() === 'observation') {
+          Mémorisez le modèle
+        } @else if (phase() === 'results') {
+          Résultat collectif
+        } @else {
+          Reproduisez le modèle
+        }
+      </h1>
+      <p class="session-code">Salle {{ roomCode() }}</p>
+    </div>
+    <button class="leave-button" type="button" (click)="leaveRoom()">Quitter la salle</button>
+  </header>
+
+  @if (sessionInfo(); as session) {
+    <section class="player-colors" aria-label="Couleurs des joueurs" [hidden]="isLoading() || !hasGameState()">
+      @for (player of session.players; track player.seat) {
+        <div class="color-chip" [class.current-player]="player.seat === session.mySeat">
+          <span class="color-preview" [style.backgroundColor]="player.color"></span>
+          <span>{{ player.pseudo }}</span>
+          @if (player.seat === session.mySeat) {
+            <span class="you-label">Votre couleur</span>
+          }
+        </div>
+      }
+    </section>
+  }
+
+  @if (isLoading()) {
+    <p class="connection-status">Préparation de la partie…</p>
+  }
+
+  <section class="phase-status" aria-live="polite" [hidden]="isLoading()">
+    @if (phase() === 'observation') {
+      <strong class="countdown">{{ observationSeconds() }}</strong>
+      <p>Observez le modèle : il sera bientôt caché. Chaque joueur pourra le revoir une fois pendant 5 secondes.</p>
+    } @else if (phase() === 'painting') {
+      <strong class="countdown">{{ paintingSeconds() }} s</strong>
+      <p>Reproduisez ensemble le modèle avec la bombe de peinture.</p>
+      @if (canRequestModel()) {
+        <button class="reveal-button" type="button" (click)="requestModel()">Revoir le modèle (une fois)</button>
+      } @else if (modelRevealPending()) {
+        <span class="connection-status">Demande envoyée…</span>
+      } @else if (modelRevealSeconds() > 0) {
+        <span class="connection-status">Modèle visible encore {{ modelRevealSeconds() }} s</span>
+      } @else {
+        <span class="connection-status">Modèle consulté</span>
+      }
+    } @else {
+      <p>Voici le résultat de votre toile commune.</p>
+    }
+  </section>
+
+  <section
+    class="painting-layout"
+    [class.results-layout]="phase() === 'results'"
+    [hidden]="isLoading()"
+  >
+    <article class="target-card" [hidden]="!isModelVisible() || isLoading()">
+      <h2>Modèle à recopier</h2>
+      <canvas
+        #modelCanvas
+        class="game-canvas"
+        width="1200"
+        height="720"
+        aria-label="Modèle à recopier"
+      ></canvas>
+    </article>
+
+    <article class="canvas-card" [hidden]="phase() === 'observation' || modelRevealSeconds() > 0 || isLoading()">
+      <div class="canvas-heading">
+        <h2>{{ phase() === 'results' ? 'Reproduction commune' : 'Votre toile commune' }}</h2>
+        @if (phase() === 'painting') {
+          <p>Maintenez le clic et déplacez la bombe pour pulvériser la peinture.</p>
+        }
+      </div>
+      <canvas
+        #paintCanvas
+        class="game-canvas paint-canvas"
+        width="1200"
+        height="720"
+        aria-label="Toile partagée"
+        [class.painting-disabled]="phase() !== 'painting'"
+        (pointerdown)="startDrawing($event)"
+        (pointermove)="continueDrawing($event)"
+        (pointerup)="finishDrawing($event)"
+        (pointercancel)="finishDrawing($event)"
+      ></canvas>
+    </article>
+  </section>
+
+  @if (phase() === 'results') {
+    <section class="results-card" aria-live="polite" [hidden]="isLoading()">
+      <div class="score-ring"><strong>{{ score() }}%</strong><span>ressemblance collective</span></div>
+      @if (isHost()) {
+        <button
+          class="finish-button"
+          type="button"
+          [disabled]="isReturning()"
+          (click)="returnToLobby()"
+        >
+          {{ isReturning() ? 'Retour au salon…' : 'Retourner au salon' }}
+        </button>
+      }
+    </section>
+  } @else if (phase() === 'painting' && isHost()) {
+    <footer class="toolbar" [hidden]="isLoading()">
+      <p>La toile et son score sont partagés par toute l’équipe.</p>
+      <button
+        class="finish-button"
+        type="button"
+        [disabled]="isEnding()"
+        (click)="finishReproduction()"
+      >
+        {{ isEnding() ? 'Calcul du score…' : 'Terminer et voir le score' }}
+      </button>
+    </footer>
+  }
+  @if (connectionError()) {
+    <p class="error-message" role="alert">{{ connectionError() }}</p>
+  }
+</main>

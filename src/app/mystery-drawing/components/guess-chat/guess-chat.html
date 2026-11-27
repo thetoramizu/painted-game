@@ -1,0 +1,28 @@
+<section class="chat-card">
+  <h2>Discussion</h2>
+  <div class="message-list" aria-live="polite">
+    @for (line of lines; track line.id) {
+      <p [class.system-message]="line.system">
+        @if (!line.system) { <strong>{{ line.pseudo }} :</strong> }
+        {{ line.text }}
+      </p>
+    } @empty {
+      <p class="empty-chat">Les propositions apparaîtront ici.</p>
+    }
+  </div>
+  <form (submit)="$event.preventDefault(); submit()">
+    <input
+      type="text"
+      name="guess"
+      maxlength="80"
+      autocomplete="off"
+      placeholder="Votre proposition…"
+      [disabled]="disabled || found || drawer"
+      [(value)]="answer"
+      (input)="answer = $any($event.target).value"
+    />
+    <button type="submit" [disabled]="disabled || found || drawer || !answer.trim()">Envoyer</button>
+  </form>
+  @if (drawer) { <p class="chat-hint">Le dessinateur ne peut pas proposer de réponse.</p> }
+  @else if (found) { <p class="chat-hint">Vous avez trouvé le mot : attendez la prochaine manche.</p> }
+</section>

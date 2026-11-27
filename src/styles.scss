@@ -1,1 +1,119 @@
-/* You can add global styles to this file, and also import other style files */
+:root {
+  --color-ink: #1f1d2b;
+  --color-primary: #c2331f;
+  --color-accent: #ffc83d;
+  --color-surface: #ffffff;
+  --color-background: #fff7e8;
+  --color-muted: #5b5870;
+  --color-border: #e6dcc8;
+  --color-danger: #a3261a;
+  --font-heading: 'Fredoka', system-ui, sans-serif;
+  --font-body: 'Nunito', system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--color-ink);
+  background: var(--color-background);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2 {
+  font-family: var(--font-heading);
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+/* --- Base Buttons --- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 24px;
+  border-radius: 999px;
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: none;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.btn:active {
+  transform: scale(0.96);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: white;
+  box-shadow: 0 4px 12px rgba(194, 51, 31, 0.3);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #d83d28;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(194, 51, 31, 0.4);
+}
+
+.btn-secondary {
+  background: var(--color-accent);
+  color: var(--color-ink);
+  box-shadow: 0 4px 12px rgba(255, 200, 61, 0.3);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #ffd363;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(255, 200, 61, 0.4);
+}
+
+.btn-outline {
+  background: transparent;
+  border: 2px solid var(--color-border);
+  color: var(--color-ink);
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: var(--color-surface);
+  border-color: var(--color-accent);
+  transform: translateY(-2px);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(0,0,0,0.05);
+  color: var(--color-ink);
+}
+
+button,
+input {
+
+  font-family: inherit;
+}

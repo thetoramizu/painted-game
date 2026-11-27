@@ -1,0 +1,11 @@
+:host { display: block; }
+.summary-card { padding: 20px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface); }
+.eyebrow { margin: 0 0 6px; color: var(--color-primary); font-size: 12px; font-weight: 900; text-transform: uppercase; }
+h2 { margin: 0 0 10px; }
+p { margin: 6px 0; color: var(--color-muted); }
+.results { display: grid; gap: 4px; margin: 14px 0; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--color-accent) 28%, white); }
+.results p { color: var(--color-ink); }
+.summary-card h3 { margin: 18px 0 8px; }
+.found-counts { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.found-counts li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 10px; }
+.found-counts strong { color: var(--color-primary); }
