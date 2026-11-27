@@ -1,0 +1,70 @@
+<main class="portrait-game">
+  <header class="game-header">
+    <div>
+      <p class="eyebrow">Portrait décalé</p>
+      <h1>{{ phase() === 'results' ? 'Résultat' : 'Reconstruisez le visage' }}</h1>
+      <p class="session-code">Salle {{ roomCode() }}</p>
+    </div>
+    <button class="leave-button" type="button" (click)="leaveGame()">Quitter</button>
+  </header>
+
+  @if (isLoading()) {
+    <div class="loading-state"><span class="spinner"></span><p>Préparation du portrait…</p></div>
+  } @else if (error()) {
+    <p class="error-message" role="alert">{{ error() }}</p>
+  } @else {
+    <section class="game-status">
+      @if (phase() === 'observation') {
+        <div class="countdown"><strong>{{ observationSeconds() }}</strong><span>secondes</span></div>
+        <p>Observez le modèle et mémorisez chaque élément.</p>
+      } @else if (phase() === 'reproduction') {
+        <div class="turn-card">
+          <span class="turn-player">{{ activePlayer() }}</span>
+          <strong>Placez la position {{ activeStep() === 'x' ? 'horizontale' : 'verticale' }}</strong>
+          @if (turns[turnIndex]?.seat === mySeat) {
+            <button type="button" class="validate-button" (click)="validatePosition()">Valider {{ activeStep().toUpperCase() }}</button>
+          } @else {
+            <span class="waiting-turn">Laissez {{ activePlayer() }} jouer</span>
+          }
+        </div>
+      }
+    </section>
+
+    @if (phase() === 'results') {
+      <section class="results-card">
+        <div class="score-ring"><strong>{{ score() }}%</strong><span>ressemblance</span></div>
+        <div class="portrait-comparison">
+          <article>
+            <h2>Modèle original</h2>
+            <canvas #modelCanvas class="result-canvas" width="1000" height="700" aria-label="Portrait modèle original"></canvas>
+          </article>
+          <article>
+            <h2>Votre reconstruction</h2>
+            <canvas #reconstructedCanvas class="result-canvas" width="1000" height="700" aria-label="Portrait reconstruit"></canvas>
+          </article>
+        </div>
+        @if (isHost()) {
+          <button type="button" class="new-game-button" (click)="startNewGame()">Nouvelle partie</button>
+        }
+      </section>
+    } @else {
+      <section class="canvas-card">
+        <canvas
+          #portraitCanvas
+          class="portrait-canvas"
+          width="1000"
+          height="700"
+          aria-label="Toile du portrait décalé"
+        ></canvas>
+      </section>
+    }
+
+    <section class="players-row" aria-label="Joueurs">
+      @for (player of players(); track player.seat) {
+        <span class="player-chip" [class.active-player]="activePlayer() === player.pseudo">
+          J{{ player.seat + 1 }} · {{ player.pseudo }}
+        </span>
+      }
+    </section>
+  }
+</main>

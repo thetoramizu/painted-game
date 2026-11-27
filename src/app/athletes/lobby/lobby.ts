@@ -123,9 +123,12 @@ export class Lobby implements OnInit {
             snapshot.mySeat
           );
         }
-        await this.router.navigate(
-          snapshot.gameType === 'paint' ? ['/salon', code, 'peindre'] : ['/salon', code, 'jouer']
-        );
+        const gamePath = snapshot.gameType === 'paint'
+          ? ['/salon', code, 'peindre']
+          : snapshot.gameType === 'portrait'
+            ? ['/salon', code, 'portrait']
+            : ['/salon', code, 'jouer'];
+        await this.router.navigate(gamePath);
       } else {
         this.startError.set(result.message || 'Impossible de commencer la partie.');
       }
@@ -158,8 +161,11 @@ export class Lobby implements OnInit {
   }
 
   private navigateToGame(code: string, gameType: GameType): void {
-    void this.router.navigate(gameType === 'paint'
+    const path = gameType === 'paint'
       ? ['/salon', code, 'peindre']
-      : ['/salon', code, 'jouer']);
+      : gameType === 'portrait'
+        ? ['/salon', code, 'portrait']
+        : ['/salon', code, 'jouer'];
+    void this.router.navigate(path);
   }
 }

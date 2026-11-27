@@ -75,6 +75,20 @@
             }
           </div>
         </button>
+        <button
+          type="button"
+          class="seat game-option"
+          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          (click)="selectGame('portrait')"
+        >
+          <div class="seat-info">
+            <strong>Portrait décalé</strong>
+            <span>Reconstruisez collectivement un visage mémorable.</span>
+            @if (snapshot.gameType === 'portrait') {
+              <span class="badge">Choisi</span>
+            }
+          </div>
+        </button>
       </div>
       @if (snapshot.mySeat !== 0) {
         <p class="status-hint">Le chef de salle choisit le jeu.</p>
@@ -118,7 +132,7 @@
     <div class="action-bar">
       @if (snapshot.mySeat === 0) {
         <app-btn
-          [label]="snapshot.gameType === 'paint' ? 'Commencer à peindre' : 'Commencer la course'"
+          [label]="snapshot.gameType === 'paint' ? 'Commencer à peindre' : snapshot.gameType === 'portrait' ? 'Commencer le portrait' : 'Commencer la course'"
           loadingLabel="Démarrage..."
           [loading]="isStarting()"
           [disabled]="snapshot.players.length < 2 || isStarting() || isChangingGame()"

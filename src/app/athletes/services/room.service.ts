@@ -2,7 +2,7 @@ import { inject, Injectable, signal } from '@angular/core';
 import { SupabaseService } from '../core/supabase-client';
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
-export type GameType = 'athletes' | 'paint';
+export type GameType = 'athletes' | 'paint' | 'portrait';
 
 export interface RoomPlayer {
   pseudo: string;
@@ -278,5 +278,5 @@ function isRoomStatus(value: unknown): value is RoomStatus {
 }
 
 function isGameType(value: unknown): value is GameType {
-  return value === 'athletes' || value === 'paint';
+  return value === 'athletes' || value === 'paint' || value === 'portrait';
 }

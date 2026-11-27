@@ -202,6 +202,8 @@ export class PaintGame implements AfterViewInit, OnDestroy {
     else if (status === 'finished') void this.router.navigate(['/']);
     else if (status === 'playing' && gameType === 'athletes') {
       void this.router.navigate(['/salon', code, 'jouer']);
+    } else if (status === 'playing' && gameType === 'portrait') {
+      void this.router.navigate(['/salon', code, 'portrait']);
     }
   }
 
