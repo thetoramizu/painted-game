@@ -1,0 +1,10 @@
+<canvas
+  #canvas
+  class="drawing-surface"
+  aria-label="Toile de dessin partagée"
+  [class.read-only]="!canDraw"
+  (pointerdown)="pointerDown($event)"
+  (pointermove)="pointerMove($event)"
+  (pointerup)="pointerUp($event)"
+  (pointercancel)="pointerUp($event)"
+></canvas>

@@ -496,9 +496,13 @@ function parsePaintModel(value: unknown): PaintModel | null {
         points: mark['points'].map(parsePoint),
         opacity: mark['opacity'],
       };
-      marks.push(mark['kind'] === 'oval'
-        ? { ...base, kind: 'oval' }
-        : { ...base, kind: 'sweep', width: mark['width'] });
+      if (mark['kind'] === 'oval') {
+        marks.push({ ...base, kind: 'oval' });
+      } else {
+        const width = mark['width'];
+        if (typeof width !== 'number') return null;
+        marks.push({ ...base, kind: 'sweep', width });
+      }
     } catch {
       return null;
     }
@@ -643,7 +647,7 @@ function isAvailablePaintColor(value: string): boolean {
   const normalized = value.toLowerCase();
   return isPaintColor(value) && (
     PAINT_PALETTE.some((color) => color === normalized) ||
-    PAINT_COLOR_SETS.some((colors) => colors.includes(normalized))
+    PAINT_COLOR_SETS.some((colors) => colors.some((color) => color === normalized))
   );
 }
 

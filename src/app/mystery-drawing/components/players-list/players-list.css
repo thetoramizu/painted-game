@@ -1,0 +1,12 @@
+:host { display: block; }
+.players-card { padding: 16px; border: 1px solid var(--color-border); border-radius: 18px; background: var(--color-surface); }
+h2 { margin: 0 0 12px; font-size: 18px; }
+ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px; border-radius: 12px; }
+li.is-drawer { background: color-mix(in srgb, var(--color-primary) 10%, transparent); }
+li.is-found { background: color-mix(in srgb, #39a96b 12%, transparent); }
+.avatar { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; border-radius: 50%; background: var(--color-accent); font-weight: 900; }
+.player-name { display: grid; min-width: 0; }
+.player-name strong { overflow: hidden; text-overflow: ellipsis; }
+.player-name small, .player-name span { color: var(--color-muted); font-size: 12px; }
+.status-icon { margin-left: auto; color: var(--color-primary); font-size: 20px; font-weight: 900; }

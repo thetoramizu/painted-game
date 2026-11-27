@@ -107,7 +107,9 @@ export class Lobby implements OnInit {
     this.isStarting.set(true);
 
     try {
-      const result = await this.roomService.startRoom(code, pseudo);
+      const result = snapshot.gameType === 'mystery'
+        ? await this.roomService.startMysteryGame(code, this.roomService.readToken(code) ?? '')
+        : await this.roomService.startRoom(code, pseudo);
       if (result.success) {
         if (snapshot.gameType === 'athletes') {
           const players = [...snapshot.players]
@@ -123,7 +125,9 @@ export class Lobby implements OnInit {
             snapshot.mySeat
           );
         }
-        const gamePath = snapshot.gameType === 'paint'
+        const gamePath = snapshot.gameType === 'mystery'
+          ? ['/salon', code, 'dessin-mystere']
+          : snapshot.gameType === 'paint'
           ? ['/salon', code, 'peindre']
           : snapshot.gameType === 'portrait'
             ? ['/salon', code, 'portrait']
@@ -161,7 +165,9 @@ export class Lobby implements OnInit {
   }
 
   private navigateToGame(code: string, gameType: GameType): void {
-    const path = gameType === 'paint'
+    const path = gameType === 'mystery'
+      ? ['/salon', code, 'dessin-mystere']
+      : gameType === 'paint'
       ? ['/salon', code, 'peindre']
       : gameType === 'portrait'
         ? ['/salon', code, 'portrait']

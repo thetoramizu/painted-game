@@ -1,0 +1,13 @@
+<section class="choice-card" aria-live="polite">
+  <div>
+    <p class="eyebrow">À vous de dessiner</p>
+    <h2>Choisissez un mot</h2>
+    <p>Les autres joueurs ne verront pas votre choix.</p>
+  </div>
+  <strong class="choice-clock">{{ seconds }} s</strong>
+  <div class="word-options">
+    @for (word of words; track word) {
+      <button type="button" [disabled]="busy" (click)="selected.emit(word)">{{ word }}</button>
+    }
+  </div>
+</section>

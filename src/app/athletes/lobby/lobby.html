@@ -65,6 +65,20 @@
           type="button"
           class="seat game-option"
           [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          (click)="selectGame('mystery')"
+        >
+          <div class="seat-info">
+            <strong>Dessin Mystère</strong>
+            <span>Faites deviner un mot à vos amis en le dessinant.</span>
+            @if (snapshot.gameType === 'mystery') {
+              <span class="badge">Choisi</span>
+            }
+          </div>
+        </button>
+        <button
+          type="button"
+          class="seat game-option"
+          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('paint')"
         >
           <div class="seat-info">
@@ -132,7 +146,7 @@
     <div class="action-bar">
       @if (snapshot.mySeat === 0) {
         <app-btn
-          [label]="snapshot.gameType === 'paint' ? 'Commencer à peindre' : snapshot.gameType === 'portrait' ? 'Commencer le portrait' : 'Commencer la course'"
+          [label]="snapshot.gameType === 'mystery' ? 'Commencer le Dessin Mystère' : snapshot.gameType === 'paint' ? 'Commencer à peindre' : snapshot.gameType === 'portrait' ? 'Commencer le portrait' : 'Commencer la course'"
           loadingLabel="Démarrage..."
           [loading]="isStarting()"
           [disabled]="snapshot.players.length < 2 || isStarting() || isChangingGame()"

@@ -1,0 +1,26 @@
+<section class="players-card" aria-label="Joueurs">
+  <h2>Joueurs</h2>
+  <ul>
+    @for (player of players; track player.seat) {
+      <li [class.is-drawer]="player.seat === drawerSeat" [class.is-found]="guessedSeats.includes(player.seat)">
+        <span class="avatar">{{ player.pseudo.slice(0, 1).toUpperCase() }}</span>
+        <span class="player-name">
+          <strong>{{ player.pseudo }} @if (player.seat === mySeat) { <small>(vous)</small> }</strong>
+          <span>
+            @if (player.seat === drawerSeat && phase !== 'summary' && phase !== 'finished') {
+              Dessinateur
+            } @else if (guessedSeats.includes(player.seat)) {
+              A trouvé !
+            } @else if (drawnSeats.includes(player.seat)) {
+              A déjà dessiné
+            } @else {
+              En jeu
+            }
+          </span>
+        </span>
+        @if (player.seat === drawerSeat) { <span class="status-icon" aria-label="Dessinateur">✎</span> }
+        @else if (guessedSeats.includes(player.seat)) { <span class="status-icon" aria-label="A trouvé">✓</span> }
+      </li>
+    }
+  </ul>
+</section>

@@ -2,7 +2,7 @@ import { inject, Injectable, signal } from '@angular/core';
 import { SupabaseService } from '../core/supabase-client';
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
-export type GameType = 'athletes' | 'paint' | 'portrait';
+export type GameType = 'athletes' | 'paint' | 'portrait' | 'mystery';
 
 export interface RoomPlayer {
   pseudo: string;
@@ -198,6 +198,14 @@ export class RoomService {
     return this.rpc<{ success: boolean; message: string }>('start_room', { p_code: code, p_pseudo: pseudo }, isStartRoom);
   }
 
+  startMysteryGame(code: string, token: string): Promise<{ success: boolean; message: string }> {
+    return this.rpc<{ success: boolean; message: string }>(
+      'start_mystery_game',
+      { p_code: code, p_token: token },
+      isStartRoom
+    );
+  }
+
   async finishPaintGame(code: string, pseudo: string): Promise<void> {
     const result = await this.rpc<{ success: boolean; message: string }>(
       'finish_paint_game',
@@ -278,5 +286,5 @@ function isRoomStatus(value: unknown): value is RoomStatus {
 }
 
 function isGameType(value: unknown): value is GameType {
-  return value === 'athletes' || value === 'paint' || value === 'portrait';
+  return value === 'athletes' || value === 'paint' || value === 'portrait' || value === 'mystery';
 }
