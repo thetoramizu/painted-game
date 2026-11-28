@@ -58,6 +58,26 @@ immédiatement sur la toile du dessinateur, puis est synchronisé par événemen
 et rechargé depuis les événements persistés à la reconnexion. Aucune capture de toile n’est envoyée
 à chaque mouvement.
 
+## MOTUS
+
+MOTUS est sélectionnable depuis le lobby. Sa migration Supabase crée une séquence de 15 mots
+commune et un état privé par joueur; les tentatives, le chronomètre et les scores sont validés par
+des fonctions PostgreSQL. Le client ne reçoit que son mot courant; la séquence atteinte est révélée
+à la fin. Depuis l’écran des résultats, le chef de salle peut relancer une partie (nouvelle séquence,
+scores réinitialisés) ou retourner au lobby. Appliquez les migrations au projet Supabase avec
+`npx supabase db push`.
+Les tests PostgreSQL associés se lancent avec `npx supabase test db`.
+Les tentatives et les couleurs du clavier sont réinitialisées à chaque nouveau mot; un joueur peut
+passer un mot sans point, sans pouvoir y revenir.
+
+Le dictionnaire embarqué est un sous-ensemble dérivé de **Lexique 4.15**, de New et al. (2026),
+téléchargé depuis <https://www.lexique.org/databases/Lexique/Lexique415.zip>. Les formes retenues
+sont des entrées alphabétiques de 5 à 7 lettres, de catégories grammaticales usuelles, avec une
+fréquence orthographique d’au moins 1 par million. Elles sont dédupliquées après normalisation des
+accents. Lexique et ce sous-ensemble sont distribués sous licence **CC BY-SA 4.0**; voir
+`supabase/LEXIQUE-LICENSE-CC-BY-SA-4.0.txt`. La licence s’applique aux données lexicales, pas au
+code de l’application.
+
 ## Running end-to-end tests
 
 For end-to-end (e2e) testing, run:

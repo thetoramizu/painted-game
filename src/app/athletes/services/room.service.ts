@@ -2,7 +2,7 @@ import { inject, Injectable, signal } from '@angular/core';
 import { SupabaseService } from '../core/supabase-client';
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
-export type GameType = 'athletes' | 'paint' | 'portrait' | 'mystery';
+export type GameType = 'athletes' | 'paint' | 'portrait' | 'mystery' | 'motus';
 
 export interface RoomPlayer {
   pseudo: string;
@@ -217,6 +217,23 @@ export class RoomService {
     );
   }
 
+  startMotusGame(code: string, token: string): Promise<{ success: boolean; message: string }> {
+    return this.rpc<{ success: boolean; message: string }>(
+      'start_motus_game',
+      { p_code: code, p_token: token },
+      isStartRoom
+    );
+  }
+
+  async returnMotusToLobby(code: string, token: string): Promise<void> {
+    const result = await this.rpc<{ success: boolean; message: string }>(
+      'return_motus_to_lobby',
+      { p_code: code, p_token: token },
+      isStartRoom
+    );
+    if (!result.success) throw new Error(result.message);
+  }
+
   async finishPaintGame(code: string, token: string): Promise<void> {
     const result = await this.rpc<{ success: boolean; message: string }>(
       'finish_paint_game',
@@ -299,5 +316,5 @@ function isRoomStatus(value: unknown): value is RoomStatus {
 }
 
 function isGameType(value: unknown): value is GameType {
-  return value === 'athletes' || value === 'paint' || value === 'portrait' || value === 'mystery';
+  return value === 'athletes' || value === 'paint' || value === 'portrait' || value === 'mystery' || value === 'motus';
 }

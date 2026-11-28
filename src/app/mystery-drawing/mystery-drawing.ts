@@ -106,7 +106,7 @@ export class MysteryDrawing implements OnInit, OnDestroy {
 
   protected async leaveGame(): Promise<void> {
     if (!window.confirm('Quitter la partie ? Vous pourrez revenir tant que la partie est en cours.')) return;
-    await this.router.navigate(['/salon', this.state()?.roomCode ?? '']);
+    await this.router.navigate(['/salon', this.state()?.roomCode ?? ''], { queryParams: { stay: '1' } });
   }
 
   protected async returnToLobby(): Promise<void> {

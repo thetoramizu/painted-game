@@ -63,6 +63,7 @@ export class Lobby implements OnInit, OnDestroy {
       return;
     }
     this.code.set(code);
+    const stayInLobby = this.route.snapshot.queryParamMap.get('stay') === '1';
 
     const token = this.roomService.readToken(code);
     if (!token) {
@@ -75,15 +76,22 @@ export class Lobby implements OnInit, OnDestroy {
       code,
       undefined,
       (status, gameType) => {
-        if (status === 'playing') {
+        if (status === 'playing' && !stayInLobby) {
           this.navigateToGame(code, gameType ?? this.room()?.gameType ?? 'athletes');
+        } else {
+          void this.roomService.getRoom(code, token).catch(() => {
+            this.refreshError.set('Impossible d’actualiser le statut de la salle.');
+          });
         }
       }
     );
     this.destroyRef.onDestroy(unsubscribe);
 
     try {
-      await this.roomService.getRoom(code, token);
+      const snapshot = await this.roomService.getRoom(code, token);
+      if (snapshot.status === 'playing' && snapshot.gameType === 'motus' && !stayInLobby) {
+        this.navigateToGame(code, snapshot.gameType);
+      }
     } catch (e) {
       this.accessError.set("Impossible de charger la salle.");
     }
@@ -110,7 +118,7 @@ export class Lobby implements OnInit, OnDestroy {
     const code = this.code();
     const snapshot = this.room();
     const token = this.roomService.readToken(code ?? '');
-    if (!code || !token || !snapshot) return;
+    if (!code || !token || !snapshot || snapshot.status !== 'lobby') return;
     if (this.isStarting()) return;
 
     this.isStarting.set(true);
@@ -118,7 +126,9 @@ export class Lobby implements OnInit, OnDestroy {
     try {
       const result = snapshot.gameType === 'mystery'
         ? await this.roomService.startMysteryGame(code, token)
-        : await this.roomService.startRoom(code, token);
+        : snapshot.gameType === 'motus'
+          ? await this.roomService.startMotusGame(code, token)
+          : await this.roomService.startRoom(code, token);
       if (result.success) {
         if (snapshot.gameType === 'athletes') {
           const players = [...snapshot.players]
@@ -134,8 +144,10 @@ export class Lobby implements OnInit, OnDestroy {
             snapshot.mySeat
           );
         }
-        const gamePath = snapshot.gameType === 'mystery'
-          ? ['/salon', code, 'dessin-mystere']
+        const gamePath = snapshot.gameType === 'motus'
+          ? ['/salon', code, 'motus']
+          : snapshot.gameType === 'mystery'
+            ? ['/salon', code, 'dessin-mystere']
           : snapshot.gameType === 'paint'
           ? ['/salon', code, 'peindre']
           : snapshot.gameType === 'portrait'
@@ -155,7 +167,14 @@ export class Lobby implements OnInit, OnDestroy {
   protected async selectGame(gameType: GameType): Promise<void> {
     const code = this.code();
     const token = this.roomService.readToken(code ?? '');
-    if (!code || !token || this.room()?.mySeat !== 0 || this.isChangingGame()) return;
+    const snapshot = this.room();
+    if (
+      !code ||
+      !token ||
+      snapshot?.status !== 'lobby' ||
+      snapshot.mySeat !== 0 ||
+      this.isChangingGame()
+    ) return;
 
     this.isChangingGame.set(true);
     this.gameTypeError.set(null);
@@ -172,9 +191,17 @@ export class Lobby implements OnInit, OnDestroy {
     await this.router.navigate(['/']);
   }
 
+  protected resumeGame(): void {
+    const code = this.code();
+    const snapshot = this.room();
+    if (code && snapshot?.status === 'playing') this.navigateToGame(code, snapshot.gameType);
+  }
+
   private navigateToGame(code: string, gameType: GameType): void {
-    const path = gameType === 'mystery'
-      ? ['/salon', code, 'dessin-mystere']
+    const path = gameType === 'motus'
+      ? ['/salon', code, 'motus']
+      : gameType === 'mystery'
+        ? ['/salon', code, 'dessin-mystere']
       : gameType === 'paint'
       ? ['/salon', code, 'peindre']
       : gameType === 'portrait'

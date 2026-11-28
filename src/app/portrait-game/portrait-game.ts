@@ -192,7 +192,7 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
 
   protected leaveGame(): void {
     if (!window.confirm('Quitter le portrait décalé ? Votre progression restera enregistrée.')) return;
-    void this.router.navigate(['/salon', this.roomCode()]);
+    void this.router.navigate(['/salon', this.roomCode()], { queryParams: { stay: '1' } });
   }
 
   private async initialize(): Promise<void> {

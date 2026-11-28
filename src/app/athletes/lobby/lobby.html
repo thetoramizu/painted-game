@@ -57,7 +57,7 @@
           type="button"
           class="seat game-option"
           [attr.aria-pressed]="snapshot.gameType === 'athletes'"
-          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          [disabled]="snapshot.status !== 'lobby' || snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('athletes')"
         >
           <div class="seat-info">
@@ -72,7 +72,7 @@
           type="button"
           class="seat game-option"
           [attr.aria-pressed]="snapshot.gameType === 'mystery'"
-          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          [disabled]="snapshot.status !== 'lobby' || snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('mystery')"
         >
           <div class="seat-info">
@@ -86,8 +86,23 @@
         <button
           type="button"
           class="seat game-option"
+          [attr.aria-pressed]="snapshot.gameType === 'motus'"
+          [disabled]="snapshot.status !== 'lobby' || snapshot.mySeat !== 0 || isChangingGame()"
+          (click)="selectGame('motus')"
+        >
+          <div class="seat-info">
+            <strong>MOTUS</strong>
+            <span>Trouvez un maximum de mots en 2 minutes.</span>
+            @if (snapshot.gameType === 'motus') {
+              <span class="badge">Choisi</span>
+            }
+          </div>
+        </button>
+        <button
+          type="button"
+          class="seat game-option"
           [attr.aria-pressed]="snapshot.gameType === 'paint'"
-          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          [disabled]="snapshot.status !== 'lobby' || snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('paint')"
         >
           <div class="seat-info">
@@ -102,7 +117,7 @@
           type="button"
           class="seat game-option"
           [attr.aria-pressed]="snapshot.gameType === 'portrait'"
-          [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
+          [disabled]="snapshot.status !== 'lobby' || snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('portrait')"
         >
           <div class="seat-info">
@@ -114,7 +129,9 @@
           </div>
         </button>
       </div>
-      @if (snapshot.mySeat !== 0) {
+      @if (snapshot.status === 'playing') {
+        <p class="status-hint">Une partie est en cours. Vous pouvez la reprendre à tout moment.</p>
+      } @else if (snapshot.mySeat !== 0) {
         <p class="status-hint">Le chef de salle choisit le jeu.</p>
       }
       @if (gameTypeError()) {
@@ -154,12 +171,14 @@
     </section>
 
     <div class="action-bar">
-      @if (snapshot.mySeat === 0) {
+      @if (snapshot.status === 'playing') {
+        <app-btn label="Revenir à la partie" (clicked)="resumeGame()" />
+      } @else if (snapshot.mySeat === 0) {
         <app-btn
-          [label]="snapshot.gameType === 'mystery' ? 'Commencer le Dessin Mystère' : snapshot.gameType === 'paint' ? 'Commencer à peindre' : snapshot.gameType === 'portrait' ? 'Commencer le portrait' : 'Commencer la course'"
+          [label]="snapshot.gameType === 'motus' ? 'Commencer MOTUS' : snapshot.gameType === 'mystery' ? 'Commencer le Dessin Mystère' : snapshot.gameType === 'paint' ? 'Commencer à peindre' : snapshot.gameType === 'portrait' ? 'Commencer le portrait' : 'Commencer la course'"
           loadingLabel="Démarrage..."
           [loading]="isStarting()"
-          [disabled]="snapshot.players.length < 2 || isStarting() || isChangingGame()"
+          [disabled]="snapshot.status !== 'lobby' || snapshot.players.length < 2 || isStarting() || isChangingGame()"
           (clicked)="startGame()"
         />
         

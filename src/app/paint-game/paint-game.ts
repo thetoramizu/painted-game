@@ -371,7 +371,7 @@ export class PaintGame implements AfterViewInit, OnDestroy {
 
   protected leaveRoom(): void {
     if (!window.confirm('Quitter la partie ? Votre progression restera enregistrée dans cette salle.')) return;
-    void this.router.navigate(['/salon', this.roomCode()]);
+    void this.router.navigate(['/salon', this.roomCode()], { queryParams: { stay: '1' } });
   }
 
   private async initializeGame(): Promise<void> {

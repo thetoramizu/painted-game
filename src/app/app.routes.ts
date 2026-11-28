@@ -34,5 +34,11 @@ export const routes: Routes = [
     title: 'Dessin Mystère',
     canActivate: [roomGuard],
   },
+  {
+    path: 'salon/:code/motus',
+    loadComponent: () => import('./motus/motus-game').then((module) => module.MotusGame),
+    title: 'MOTUS',
+    canActivate: [roomGuard],
+  },
   { path: '**', redirectTo: '' },
 ];

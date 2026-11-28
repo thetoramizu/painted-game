@@ -1,0 +1,185 @@
+<main class="motus-game">
+  @if (loading()) {
+    <p class="loading-message" role="status">Connexion à la partie MOTUS…</p>
+  } @else if (state(); as game) {
+    <header class="game-header">
+      <div>
+        <p class="eyebrow">Jeu de lettres</p>
+        <h1>MOTUS</h1>
+        <p class="room-label">Salle {{ game.roomCode }}</p>
+      </div>
+      <div class="header-actions">
+        <div class="timer" [class.low-time]="secondsRemaining() <= 15" aria-live="polite">
+          <strong>{{ formatTime(secondsRemaining()) }}</strong>
+          <span>restantes</span>
+        </div>
+        @if (!isFinished() || !isHost()) {
+          <button type="button" class="leave-button" (click)="leaveGame()">Quitter</button>
+        }
+      </div>
+    </header>
+
+    @if (connectionError()) {
+      <p class="error-message" role="alert">Connexion instable : {{ connectionError() }}</p>
+    }
+    @if (error()) {
+      <p class="error-message" role="alert">{{ error() }}</p>
+    }
+
+    @if (isFinished()) {
+      <section class="results-card" aria-labelledby="results-title">
+        <p class="eyebrow">Temps écoulé</p>
+        <h2 id="results-title">Résultats</h2>
+        <p class="result-summary">{{ formatWordCount(game.wordsFound) }} par vous.</p>
+
+        <h3>Classement</h3>
+        <ol class="ranking">
+          @for (player of rankedScores(); track player.seat) {
+            <li>
+              <span class="rank-number">{{ player.rank }}.</span>
+              <strong>{{ player.pseudo }}</strong>
+              <span>{{ formatWordCount(player.wordsFound) }}</span>
+            </li>
+          }
+        </ol>
+
+        <h3>Mots de la séquence</h3>
+        <ol class="word-recap">
+          @for (word of game.recapWords; track $index) {
+            <li><span>{{ $index + 1 }}</span><strong>{{ word.toLocaleUpperCase('fr-FR') }}</strong></li>
+          }
+        </ol>
+
+        @if (isHost()) {
+          <div class="header-actions result-actions">
+            <button type="button" class="primary-button" [disabled]="busy()" (click)="restartGame()">
+              {{ busy() ? 'Relancement…' : 'Rejouer' }}
+            </button>
+            <button type="button" class="leave-button" [disabled]="busy()" (click)="returnToLobby()">
+              {{ busy() ? 'Retour…' : 'Retourner au salon' }}
+            </button>
+          </div>
+        } @else {
+          <p class="waiting-message">En attente du chef de salle pour retourner au salon.</p>
+        }
+      </section>
+    } @else {
+      <section class="game-layout">
+        <div class="play-column">
+          <section class="word-card" aria-labelledby="word-title">
+            @if (hasFoundAll()) {
+              <p class="complete-message">Vous avez terminé les 15 mots. Le chronomètre continue.</p>
+            } @else {
+              <div class="word-heading">
+                <div>
+                  <p class="eyebrow">Mot {{ game.wordIndex }} / 15</p>
+                  <h2 id="word-title">Trouvez le mot</h2>
+                </div>
+                <strong class="word-length">{{ game.wordLength }} lettres</strong>
+              </div>
+
+              <form class="guess-form" (submit)="$event.preventDefault(); submitGuess()">
+                <div class="guess-input">
+                  <div class="guess-cells" aria-hidden="true">
+                    @for (letter of guessCells(); track $index) {
+                      <span class="guess-cell" [class.locked]="$index === 0">{{ letter }}</span>
+                    }
+                  </div>
+                  <input
+                    #guessInput
+                    type="text"
+                    [value]="guessTail()"
+                    [attr.maxlength]="(game.wordLength ?? 1) - 1"
+                    [disabled]="busy() || secondsRemaining() === 0"
+                    autocomplete="off"
+                    autocapitalize="characters"
+                    spellcheck="false"
+                    aria-label="Saisir les lettres restantes"
+                    (input)="handleGuessInput($event)"
+                    (keydown)="handleGuessKeydown($event)"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  class="primary-button"
+                  [disabled]="busy() || secondsRemaining() === 0 || game.wordIndex > 15"
+                >
+                  {{ busy() ? 'Vérification…' : 'Valider' }}
+                </button>
+              </form>
+
+              <div class="virtual-keyboard" aria-label="Clavier virtuel">
+                @for (row of keyboardRows; track $index) {
+                  <div class="keyboard-row">
+                    @for (letter of row; track letter) {
+                      <button
+                        type="button"
+                        [class.correct]="keyboardFeedback().get(letter) === 'correct'"
+                        [class.present]="keyboardFeedback().get(letter) === 'present'"
+                        [class.absent]="keyboardFeedback().get(letter) === 'absent'"
+                        [attr.aria-label]="getKeyboardLabel(letter)"
+                        [disabled]="busy() || secondsRemaining() === 0"
+                        (click)="addLetter(letter)"
+                      >{{ letter }}</button>
+                    }
+                  </div>
+                }
+                <div class="keyboard-row keyboard-actions">
+                  <button type="button" [disabled]="busy()" (click)="removeLetter()">⌫</button>
+                  <button type="button" [disabled]="busy()" (click)="submitGuess()">Entrée</button>
+                  <button type="button" [disabled]="busy() || secondsRemaining() === 0" (click)="skipWord()">
+                    Passer le mot
+                  </button>
+                </div>
+              </div>
+            }
+          </section>
+
+          <section class="attempts-card" aria-labelledby="attempts-title">
+            <h2 id="attempts-title">Tentatives pour ce mot ({{ currentAttempts().length }})</h2>
+            @if (currentAttempts().length === 0) {
+              <p class="empty-message">Vos propositions apparaîtront ici.</p>
+            } @else {
+              <ol class="attempts-list">
+                @for (attempt of currentAttempts(); track $index) {
+                  <li class="attempt-row" [class.found-attempt]="attempt.found">
+                    <span class="attempt-number">{{ attempt.wordIndex }}.</span>
+                    <div class="letter-row" [attr.aria-label]="'Tentative ' + attempt.guess">
+                      @for (letter of attempt.guess; track $index) {
+                        <span
+                          class="letter-tile"
+                          [class.correct]="attempt.feedback[$index] === 'correct'"
+                          [class.present]="attempt.feedback[$index] === 'present'"
+                          [class.absent]="attempt.feedback[$index] === 'absent'"
+                          [attr.aria-label]="letter + ' : ' + getFeedbackLabel(attempt.feedback[$index])"
+                        >{{ letter }}</span>
+                      }
+                    </div>
+                    @if (attempt.found) { <span class="found-label">Trouvé !</span> }
+                  </li>
+                }
+              </ol>
+            }
+          </section>
+        </div>
+
+        <aside class="scores-card" aria-labelledby="scores-title">
+          <h2 id="scores-title">Joueurs</h2>
+          <ul>
+            @for (player of game.scores; track player.seat) {
+              <li [class.is-me]="player.seat === game.mySeat">
+                <span class="avatar">{{ player.pseudo.slice(0, 1).toLocaleUpperCase('fr-FR') }}</span>
+                <span class="player-name">
+                  <strong>{{ player.pseudo }} @if (player.seat === game.mySeat) { <small>(vous)</small> }</strong>
+                  <span>{{ formatWordCount(player.wordsFound) }}</span>
+                </span>
+              </li>
+            }
+          </ul>
+        </aside>
+      </section>
+    }
+  } @else {
+    <p class="loading-message" role="alert">{{ error() ?? 'Impossible de charger MOTUS.' }}</p>
+  }
+</main>
