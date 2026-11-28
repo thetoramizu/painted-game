@@ -1,4 +1,4 @@
-import { Component, DestroyRef, OnInit, inject, signal, computed } from '@angular/core';
+import { Component, DestroyRef, OnDestroy, OnInit, inject, signal, computed } from '@angular/core';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { RoomService, type GameType } from '../services/room.service';
 import { RaceService } from '../services/race.service';
@@ -14,7 +14,7 @@ const SEATS = [0, 1, 2, 3];
   templateUrl: './lobby.html',
   styleUrl: './lobby.css',
 })
-export class Lobby implements OnInit {
+export class Lobby implements OnInit, OnDestroy {
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly roomService = inject(RoomService);
@@ -46,9 +46,14 @@ export class Lobby implements OnInit {
   });
 
   private readonly code = signal<string | null>(null);
+  private copiedResetTimer: ReturnType<typeof setTimeout> | null = null;
 
   ngOnInit(): void {
     this.initializeLobby();
+  }
+
+  ngOnDestroy(): void {
+    if (this.copiedResetTimer) clearTimeout(this.copiedResetTimer);
   }
 
   private async initializeLobby(): Promise<void> {
@@ -59,8 +64,8 @@ export class Lobby implements OnInit {
     }
     this.code.set(code);
 
-    const pseudo = this.roomService.readPseudo(code);
-    if (!pseudo) {
+    const token = this.roomService.readToken(code);
+    if (!token) {
       this.accessError.set("Vous n'avez pas de place dans cette salle. Rejoignez-la depuis l'accueil.");
       return;
     }
@@ -78,7 +83,7 @@ export class Lobby implements OnInit {
     this.destroyRef.onDestroy(unsubscribe);
 
     try {
-      await this.roomService.getRoom(code, pseudo);
+      await this.roomService.getRoom(code, token);
     } catch (e) {
       this.accessError.set("Impossible de charger la salle.");
     }
@@ -90,7 +95,11 @@ export class Lobby implements OnInit {
       try {
         await navigator.clipboard.writeText(code);
         this.copied.set(true);
-        setTimeout(() => this.copied.set(false), 2000);
+        if (this.copiedResetTimer) clearTimeout(this.copiedResetTimer);
+        this.copiedResetTimer = setTimeout(() => {
+          this.copied.set(false);
+          this.copiedResetTimer = null;
+        }, 2000);
       } catch {
         this.refreshError.set('Impossible de copier le code.');
       }
@@ -100,16 +109,16 @@ export class Lobby implements OnInit {
   protected async startGame(): Promise<void> {
     const code = this.code();
     const snapshot = this.room();
-    const pseudo = this.roomService.readPseudo(code ?? '');
-    if (!code || !pseudo || !snapshot) return;
+    const token = this.roomService.readToken(code ?? '');
+    if (!code || !token || !snapshot) return;
     if (this.isStarting()) return;
 
     this.isStarting.set(true);
 
     try {
       const result = snapshot.gameType === 'mystery'
-        ? await this.roomService.startMysteryGame(code, this.roomService.readToken(code) ?? '')
-        : await this.roomService.startRoom(code, pseudo);
+        ? await this.roomService.startMysteryGame(code, token)
+        : await this.roomService.startRoom(code, token);
       if (result.success) {
         if (snapshot.gameType === 'athletes') {
           const players = [...snapshot.players]
@@ -137,7 +146,6 @@ export class Lobby implements OnInit {
         this.startError.set(result.message || 'Impossible de commencer la partie.');
       }
     } catch (error) {
-      console.error(error);
       this.startError.set('Une erreur est survenue.');
     } finally {
       this.isStarting.set(false);
@@ -146,13 +154,13 @@ export class Lobby implements OnInit {
 
   protected async selectGame(gameType: GameType): Promise<void> {
     const code = this.code();
-    const pseudo = this.roomService.readPseudo(code ?? '');
-    if (!code || !pseudo || this.room()?.mySeat !== 0 || this.isChangingGame()) return;
+    const token = this.roomService.readToken(code ?? '');
+    if (!code || !token || this.room()?.mySeat !== 0 || this.isChangingGame()) return;
 
     this.isChangingGame.set(true);
     this.gameTypeError.set(null);
     try {
-      await this.roomService.updateGameType(code, pseudo, gameType);
+      await this.roomService.updateGameType(code, token, gameType);
     } catch (error) {
       this.gameTypeError.set(error instanceof Error ? error.message : 'Impossible de choisir ce jeu.');
     } finally {

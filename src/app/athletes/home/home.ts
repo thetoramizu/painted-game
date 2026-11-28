@@ -50,7 +50,6 @@ export class Home {
     this.error.set(null);
     try {
       const session = await action();
-      this.roomService.savePseudo(session.code, pseudo);
       this.roomService.saveToken(session.code, session.token);
       await this.router.navigate(['/salon', session.code]);
     } catch (err) {

@@ -153,6 +153,10 @@ export class GameScene extends Scene {
 
   /** Définir le chiffre affiché sur le dé ; stoppe toute animation en cours. */
   setDieFace(face: number): void {
+    if (this.dieInterval !== undefined) {
+      window.clearInterval(this.dieInterval);
+      this.dieInterval = undefined;
+    }
     this.dieRolling = false;
     this.dieText?.setText(face.toString());
   }
@@ -162,6 +166,7 @@ export class GameScene extends Scene {
     // Interrompre toute animation en cours
     if (this.dieRolling) {
       window.clearInterval(this.dieInterval);
+      this.dieInterval = undefined;
       this.dieRolling = false;
     }
 
@@ -178,9 +183,18 @@ export class GameScene extends Scene {
 
       if (step >= totalSteps) {
         window.clearInterval(this.dieInterval);
+        this.dieInterval = undefined;
         this.dieRolling = false;
         this.dieText?.setText(result.toString());
       }
     }, delayMs);
+  }
+
+  shutdown(): void {
+    if (this.dieInterval !== undefined) {
+      window.clearInterval(this.dieInterval);
+      this.dieInterval = undefined;
+    }
+    this.dieRolling = false;
   }
 }

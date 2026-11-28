@@ -20,9 +20,11 @@ interface ActiveStroke extends PaintStroke {
 }
 
 const MODEL_REVEAL_MS = 5_000;
-const SPRAY_SPACING = 14;
-const SPRAY_DROPLETS = 26;
+const SPRAY_SPACING = 18;
+const SPRAY_DROPLETS = 34;
 const MAX_STROKE_POINTS = 9_000;
+const PAINT_CANVAS_WIDTH = 1200;
+const PAINT_CANVAS_HEIGHT = 720;
 
 @Component({
   selector: 'app-paint-game',
@@ -45,6 +47,7 @@ export class PaintGame implements AfterViewInit, OnDestroy {
   protected readonly isLoading = signal(true);
   protected readonly isEnding = signal(false);
   protected readonly isReturning = signal(false);
+  protected readonly isRestarting = signal(false);
   protected readonly connectionError = signal<string | null>(null);
   protected readonly sessionInfo = this.paintService.sessionInfo;
   protected readonly phase = signal<PaintPhase>('observation');
@@ -64,7 +67,10 @@ export class PaintGame implements AfterViewInit, OnDestroy {
   private lastMoveBroadcastAt = 0;
   private readonly pendingRemoteEvents: PaintStrokeEvent[] = [];
   private readonly savedStrokeIds = new Set<string>();
+  private readonly seenStrokeIds = new Set<string>();
   private gameState: PaintGameState | null = null;
+  private strokeRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private gameStateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   private drawnModelGeneratedAt: number | null = null;
   private gameClockTimer: ReturnType<typeof setInterval> | null = null;
   private revealRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -73,8 +79,8 @@ export class PaintGame implements AfterViewInit, OnDestroy {
 
   ngAfterViewInit(): void {
     const canvas = this.canvasElement.nativeElement;
-    this.context = canvas.getContext('2d');
-    this.modelContext = this.modelCanvasElement.nativeElement.getContext('2d');
+    this.context = this.configureCanvas(canvas);
+    this.modelContext = this.configureCanvas(this.modelCanvasElement.nativeElement);
     if (!this.context || !this.modelContext) {
       this.connectionError.set('Le navigateur ne permet pas de dessiner sur cette toile.');
       this.isLoading.set(false);
@@ -89,6 +95,8 @@ export class PaintGame implements AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.stopGameClock();
     this.stopRevealRefreshTimer();
+    if (this.strokeRefreshTimer) clearTimeout(this.strokeRefreshTimer);
+    if (this.gameStateRefreshTimer) clearTimeout(this.gameStateRefreshTimer);
     if (this.revealRequestTimeout) clearTimeout(this.revealRequestTimeout);
     this.unsubscribeRoom?.();
     this.paintService.leavePaintChannel();
@@ -136,6 +144,7 @@ export class PaintGame implements AfterViewInit, OnDestroy {
       points: droplets,
       lastNozzle: point,
     };
+    this.seenStrokeIds.add(stroke.id);
     this.activeLocalStroke = stroke;
     this.activePointerId = event.pointerId;
     this.pendingLocalPoints.length = 0;
@@ -164,10 +173,9 @@ export class PaintGame implements AfterViewInit, OnDestroy {
 
     event.preventDefault();
     const point = this.getPoint(event);
-    const canvas = this.canvasElement.nativeElement;
     const distance = Math.hypot(
-      (point.x - stroke.lastNozzle.x) * canvas.width,
-      (point.y - stroke.lastNozzle.y) * canvas.height,
+      (point.x - stroke.lastNozzle.x) * PAINT_CANVAS_WIDTH,
+      (point.y - stroke.lastNozzle.y) * PAINT_CANVAS_HEIGHT,
     );
     if (distance < SPRAY_SPACING * 0.6) return;
 
@@ -194,12 +202,14 @@ export class PaintGame implements AfterViewInit, OnDestroy {
     if (!stroke || event.pointerId !== this.activePointerId) return;
 
     event.preventDefault();
-    this.finishActiveStroke();
+    void this.finishActiveStroke().catch((error: unknown) => {
+      this.showError(error, 'Impossible d’enregistrer cette pulvérisation.');
+    });
   }
 
-  private finishActiveStroke(): void {
+  private finishActiveStroke(): Promise<void> {
     const stroke = this.activeLocalStroke;
-    if (!stroke) return;
+    if (!stroke) return Promise.resolve();
 
     this.flushPendingPoints(stroke);
     this.activeLocalStroke = null;
@@ -210,25 +220,39 @@ export class PaintGame implements AfterViewInit, OnDestroy {
       color: stroke.color,
       type: 'end',
     });
-    void this.paintService.saveStroke(stroke, this.roomCode()).catch((error: unknown) => {
-      this.showError(error, 'Impossible d’enregistrer cette pulvérisation.');
-    });
+    const roomCode = this.roomCode();
+    const token = this.roomService.readToken(roomCode);
+    if (!token) {
+      this.showError(new Error('Votre session de salle est introuvable.'), 'Impossible d’enregistrer cette pulvérisation.');
+      return Promise.reject(new Error('Votre session de salle est introuvable.'));
+    }
+    return this.paintService.saveStroke(stroke, roomCode, token)
+      .then(() => this.paintService.notifyStrokeSaved().catch((error: unknown) => {
+        this.showError(error, 'La synchronisation des traits enregistrés a échoué.');
+      }));
   }
 
   protected requestModel(): void {
     const seat = this.sessionInfo()?.mySeat;
     if (seat === undefined || !this.canRequestModel()) return;
 
-    this.finishActiveStroke();
     this.modelRevealPending.set(true);
-    if (this.isHost()) {
-      this.grantModelReveal(seat);
+    const token = this.roomService.readToken(this.roomCode());
+    if (!token) {
+      this.modelRevealPending.set(false);
+      this.showError(new Error('Votre session de salle est introuvable.'), 'Impossible de demander à revoir le modèle.');
       return;
     }
-    void this.paintService.sendGameEvent({ type: 'request-model', seat }).catch((error: unknown) => {
-      this.modelRevealPending.set(false);
-      this.showError(error, 'Impossible de demander à revoir le modèle.');
-    });
+    void this.finishActiveStroke()
+      .then(() => this.paintService.requestModelReveal(this.roomCode(), token))
+      .then(async (state) => {
+        this.updateGameState(state);
+        await this.paintService.notifyGameStateChanged();
+      })
+      .catch((error: unknown) => {
+        this.modelRevealPending.set(false);
+        this.showError(error, 'Impossible de demander à revoir le modèle.');
+      });
     this.revealRequestTimeout = setTimeout(() => this.modelRevealPending.set(false), 3_000);
   }
 
@@ -245,18 +269,38 @@ export class PaintGame implements AfterViewInit, OnDestroy {
     const modelCanvas = this.modelCanvasElement.nativeElement;
     const paintCanvas = this.canvasElement.nativeElement;
     const modelContext = this.modelContext;
-    const paintContext = this.context;
-    if (!modelContext || !paintContext) {
+    if (!modelContext || !this.context) {
       this.connectionError.set('Impossible de calculer le score de la toile.');
+      return;
+    }
+
+    const roomCode = this.roomCode();
+    const token = this.roomService.readToken(roomCode);
+    if (!token) {
+      this.connectionError.set('Votre session de salle est introuvable.');
       return;
     }
 
     this.isEnding.set(true);
     this.connectionError.set(null);
     try {
+      await this.finishActiveStroke();
+      const savedStrokes = await this.paintService.getStrokes(roomCode, token);
+      const scoringCanvas = document.createElement('canvas');
+      scoringCanvas.width = paintCanvas.width;
+      scoringCanvas.height = paintCanvas.height;
+      const scoringContext = scoringCanvas.getContext('2d');
+      if (!scoringContext) throw new Error('Impossible de préparer le calcul du score.');
+      const scoringScale = scoringCanvas.width / PAINT_CANVAS_WIDTH;
+      scoringContext.setTransform(scoringScale, 0, 0, scoringScale, 0, 0);
+      this.clearCanvas(scoringCanvas, scoringContext);
+      for (const stroke of savedStrokes) {
+        this.drawSpray(stroke.points, stroke.color, 1, scoringContext);
+      }
+
       const score = this.paintService.calculateSimilarity(
         modelContext.getImageData(0, 0, modelCanvas.width, modelCanvas.height),
-        paintContext.getImageData(0, 0, paintCanvas.width, paintCanvas.height),
+        scoringContext.getImageData(0, 0, scoringCanvas.width, scoringCanvas.height),
       );
       this.updateGameState({
         ...this.gameState,
@@ -274,13 +318,13 @@ export class PaintGame implements AfterViewInit, OnDestroy {
 
   protected async returnToLobby(): Promise<void> {
     const code = this.roomCode();
-    const pseudo = this.roomService.readPseudo(code);
-    if (!this.isHost() || !code || !pseudo || this.isReturning()) return;
+    const token = this.roomService.readToken(code);
+    if (!this.isHost() || !code || !token || this.isReturning()) return;
 
     this.isReturning.set(true);
     this.connectionError.set(null);
     try {
-      await this.roomService.finishPaintGame(code, pseudo);
+      await this.roomService.finishPaintGame(code, token);
       await this.router.navigate(['/salon', code]);
     } catch (error) {
       this.showError(error, 'Impossible de retourner au salon.');
@@ -289,14 +333,51 @@ export class PaintGame implements AfterViewInit, OnDestroy {
     }
   }
 
+  protected async returnToLobbyAsPlayer(): Promise<void> {
+    const code = this.roomCode();
+    if (!code) return;
+    await this.router.navigate(['/salon', code]);
+  }
+
+  protected async restartGame(): Promise<void> {
+    if (!this.isHost() || this.phase() !== 'results' || this.isRestarting()) return;
+    const code = this.roomCode();
+    const token = this.roomService.readToken(code);
+    if (!token) {
+      this.connectionError.set('Votre session de salle est introuvable.');
+      return;
+    }
+    this.isRestarting.set(true);
+    this.connectionError.set(null);
+    try {
+      const { data, error } = await this.paintService.restartGame(code, token);
+      if (error) throw new Error(error.message || 'Impossible de relancer la toile.');
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result || typeof result !== 'object' || !('success' in result) || result.success !== true) {
+        throw new Error(
+          result && typeof result === 'object' && 'message' in result && typeof result.message === 'string'
+            ? result.message
+            : 'Impossible de relancer la toile.'
+        );
+      }
+      this.resetLocalPaintSurface();
+      this.beginGame();
+    } catch (error) {
+      this.showError(error, 'Impossible de relancer la toile.');
+    } finally {
+      this.isRestarting.set(false);
+    }
+  }
+
   protected leaveRoom(): void {
-    void this.router.navigate(['/']);
+    if (!window.confirm('Quitter la partie ? Votre progression restera enregistrée dans cette salle.')) return;
+    void this.router.navigate(['/salon', this.roomCode()]);
   }
 
   private async initializeGame(): Promise<void> {
     const code = this.route.snapshot.paramMap.get('code') ?? '';
-    const pseudo = this.roomService.readPseudo(code);
-    if (!code || !pseudo || !this.roomService.readToken(code)) {
+    const token = this.roomService.readToken(code);
+    if (!code || !token) {
       this.connectionError.set('Vous n’avez pas accès à cette salle.');
       this.isLoading.set(false);
       void this.router.navigate(['/']);
@@ -311,7 +392,7 @@ export class PaintGame implements AfterViewInit, OnDestroy {
     );
 
     try {
-      const snapshot = await this.roomService.getRoom(code, pseudo);
+      const snapshot = await this.roomService.getRoom(code, token);
       if (snapshot.gameType !== 'paint' || snapshot.status !== 'playing') {
         await this.router.navigate(['/salon', code]);
         return;
@@ -321,23 +402,24 @@ export class PaintGame implements AfterViewInit, OnDestroy {
       const strokes = await this.paintService.joinPaintChannel(
         code,
         snapshot.mySeat,
+        token,
         (event) => this.handleRemoteStroke(event),
+        () => this.scheduleStrokeRefresh(),
         (event) => this.handleGameEvent(event),
       );
-      for (const stroke of strokes) {
+      for (const stroke of strokes.strokes) {
         this.savedStrokeIds.add(stroke.id);
+        this.seenStrokeIds.add(stroke.id);
         this.drawSavedStroke(stroke);
       }
+      if (strokes.state) this.updateGameState(strokes.state);
       this.canvasReady = true;
 
       for (const event of this.pendingRemoteEvents.splice(0)) {
         if (!this.savedStrokeIds.has(event.strokeId)) this.applyRemoteStroke(event);
       }
 
-      if (snapshot.mySeat === 0) this.beginGame();
-      else {
-        await this.paintService.sendGameEvent({ type: 'request-state', seat: snapshot.mySeat });
-      }
+      if (snapshot.mySeat === 0 && !strokes.state) this.beginGame();
     } catch (error) {
       this.showError(error, 'Impossible de rejoindre la toile.');
     } finally {
@@ -365,46 +447,33 @@ export class PaintGame implements AfterViewInit, OnDestroy {
       revealUsedSeats: [],
       revealUntilBySeat: {},
     });
-    this.gameClockTimer = setInterval(() => this.advanceGameClock(), 1_000);
     void this.broadcastGameState();
   }
 
   private advanceGameClock(): void {
-    const state = this.gameState;
-    if (!state) {
+    if (!this.gameState) {
       this.stopGameClock();
       return;
     }
+    const roomCode = this.roomCode();
+    const token = this.roomService.readToken(roomCode);
+    if (!token) return;
 
-    if (state.phase === 'observation') {
-      const observationSeconds = Math.max(0, state.observationSeconds - 1);
-      this.updateGameState({
-        ...state,
-        phase: observationSeconds === 0 ? 'painting' : 'observation',
-        observationSeconds,
-        paintingSeconds: PAINTING_DURATION_SECONDS,
-        revision: state.revision + 1,
+    void this.paintService.tickGameState(roomCode, token)
+      .then(async (state) => {
+        if (!state) return;
+        if (state.revision > (this.gameState?.revision ?? -1)) {
+          this.updateGameState(state);
+          await this.paintService.notifyGameStateChanged();
+        }
+        if (this.isHost() && state.phase === 'painting' && state.paintingSeconds === 0) {
+          this.stopGameClock();
+          await this.completeReproduction();
+        }
+      })
+      .catch((error: unknown) => {
+        this.showError(error, 'Impossible de mettre à jour le minuteur de la partie.');
       });
-      void this.broadcastGameState();
-      return;
-    }
-
-    if (state.phase === 'painting') {
-      const paintingSeconds = Math.max(0, state.paintingSeconds - 1);
-      this.updateGameState({
-        ...state,
-        paintingSeconds,
-        revision: state.revision + 1,
-      });
-      void this.broadcastGameState();
-      if (paintingSeconds === 0) {
-        this.stopGameClock();
-        void this.completeReproduction();
-      }
-      return;
-    }
-
-    this.stopGameClock();
   }
 
   private handleRoomStatus(code: string, status: RoomStatus, gameType: GameType | null): void {
@@ -418,6 +487,7 @@ export class PaintGame implements AfterViewInit, OnDestroy {
   }
 
   private handleRemoteStroke(event: PaintStrokeEvent): void {
+    this.seenStrokeIds.add(event.strokeId);
     if (!this.canvasReady) {
       this.pendingRemoteEvents.push(event);
       return;
@@ -430,43 +500,20 @@ export class PaintGame implements AfterViewInit, OnDestroy {
   }
 
   private handleGameEvent(event: PaintGameEvent): void {
-    if (event.type === 'state') {
-      if (this.gameState && event.state.revision <= this.gameState.revision) return;
-      this.updateGameState(event.state);
-      return;
-    }
-    if (!this.isHost()) return;
-    if (event.type === 'request-state') {
-      if (this.gameState) void this.broadcastGameState();
-    } else {
-      this.grantModelReveal(event.seat);
-    }
-  }
-
-  private grantModelReveal(seat: number): void {
-    const state = this.gameState;
-    const players = this.sessionInfo()?.players ?? [];
-    if (
-      !state ||
-      state.phase !== 'painting' ||
-      !players.some((player) => player.seat === seat) ||
-      state.revealUsedSeats.includes(seat)
-    ) {
-      this.modelRevealPending.set(false);
-      return;
-    }
-
-    this.updateGameState({
-      ...state,
-      revision: state.revision + 1,
-      revealUsedSeats: [...state.revealUsedSeats, seat],
-      revealUntilBySeat: { ...state.revealUntilBySeat, [seat]: Date.now() + MODEL_REVEAL_MS },
-    });
-    void this.broadcastGameState();
+    if (event.type === 'state-changed') this.scheduleGameStateRefresh();
   }
 
   private updateGameState(state: PaintGameState): void {
+    const previousPhase = this.phase();
     this.gameState = state;
+    if (previousPhase === 'results' && state.phase === 'observation') {
+      this.resetLocalPaintSurface();
+    }
+    if (state.phase === 'results') {
+      this.stopGameClock();
+    } else if (!this.gameClockTimer) {
+      this.gameClockTimer = setInterval(() => this.advanceGameClock(), 1_000);
+    }
     this.hasGameState.set(true);
     this.paintService.setPlayerColors(state.playerColors);
     this.phase.set(state.phase);
@@ -476,7 +523,11 @@ export class PaintGame implements AfterViewInit, OnDestroy {
     const seat = this.sessionInfo()?.mySeat;
     const revealUntil = seat === undefined ? 0 : (state.revealUntilBySeat[String(seat)] ?? 0);
     this.modelRevealSeconds.set(Math.max(0, Math.ceil((revealUntil - Date.now()) / 1_000)));
-    if (state.phase === 'painting' && this.modelRevealSeconds() > 0) this.finishActiveStroke();
+    if (state.phase === 'painting' && this.modelRevealSeconds() > 0) {
+      void this.finishActiveStroke().catch((error: unknown) => {
+        this.showError(error, 'Impossible d’enregistrer cette pulvérisation.');
+      });
+    }
     if (seat !== undefined && state.revealUsedSeats.includes(seat)) {
       this.modelRevealPending.set(false);
       if (this.revealRequestTimeout) clearTimeout(this.revealRequestTimeout);
@@ -515,10 +566,70 @@ export class PaintGame implements AfterViewInit, OnDestroy {
 
   private async broadcastGameState(): Promise<void> {
     if (!this.gameState) return;
+    const roomCode = this.roomCode();
+    const token = this.roomService.readToken(roomCode);
+    if (!token) {
+      this.showError(new Error('Votre session de salle est introuvable.'), 'La synchronisation de la partie a échoué.');
+      return;
+    }
     try {
-      await this.paintService.sendGameEvent({ type: 'state', state: this.gameState });
+      const saved = await this.paintService.saveGameState(this.gameState, roomCode, token);
+      if (!saved) {
+        const latestState = await this.paintService.getPaintGameState(roomCode, token);
+        if (latestState && latestState.revision >= (this.gameState?.revision ?? -1)) {
+          this.updateGameState(latestState);
+        }
+        return;
+      }
+      await this.paintService.notifyGameStateChanged();
     } catch (error) {
       this.showError(error, 'La synchronisation de la partie a échoué.');
+    }
+  }
+
+  private scheduleStrokeRefresh(): void {
+    if (this.strokeRefreshTimer) return;
+    this.strokeRefreshTimer = setTimeout(() => {
+      this.strokeRefreshTimer = null;
+      void this.refreshSavedStrokes();
+    }, 250);
+  }
+
+  private async refreshSavedStrokes(): Promise<void> {
+    const roomCode = this.roomCode();
+    const token = this.roomService.readToken(roomCode);
+    if (!token) return;
+    try {
+      const strokes = await this.paintService.getStrokes(roomCode, token);
+      for (const stroke of strokes) {
+        if (this.savedStrokeIds.has(stroke.id)) continue;
+        this.savedStrokeIds.add(stroke.id);
+        if (this.seenStrokeIds.has(stroke.id)) continue;
+        this.seenStrokeIds.add(stroke.id);
+        this.drawSavedStroke(stroke);
+      }
+    } catch (error) {
+      this.showError(error, 'Impossible de synchroniser les traits enregistrés.');
+    }
+  }
+
+  private scheduleGameStateRefresh(): void {
+    if (this.gameStateRefreshTimer) return;
+    this.gameStateRefreshTimer = setTimeout(() => {
+      this.gameStateRefreshTimer = null;
+      void this.refreshGameState();
+    }, 250);
+  }
+
+  private async refreshGameState(): Promise<void> {
+    const roomCode = this.roomCode();
+    const token = this.roomService.readToken(roomCode);
+    if (!token) return;
+    try {
+      const state = await this.paintService.getPaintGameState(roomCode, token);
+      if (state && state.revision > (this.gameState?.revision ?? -1)) this.updateGameState(state);
+    } catch (error) {
+      this.showError(error, 'Impossible de synchroniser l’état de la partie.');
     }
   }
 
@@ -531,7 +642,6 @@ export class PaintGame implements AfterViewInit, OnDestroy {
     color: string,
     opacity = 1,
     context = this.context,
-    canvas = this.canvasElement.nativeElement,
   ): void {
     if (!context) return;
     context.fillStyle = color;
@@ -539,8 +649,8 @@ export class PaintGame implements AfterViewInit, OnDestroy {
       context.globalAlpha = (0.28 + Math.min(point.radius ?? 2.5, 5) * 0.07) * opacity;
       context.beginPath();
       context.arc(
-        point.x * canvas.width,
-        point.y * canvas.height,
+        point.x * PAINT_CANVAS_WIDTH,
+        point.y * PAINT_CANVAS_HEIGHT,
         point.radius ?? 2.5,
         0,
         Math.PI * 2,
@@ -553,8 +663,7 @@ export class PaintGame implements AfterViewInit, OnDestroy {
   private drawModel(model: PaintModel): void {
     const context = this.modelContext;
     if (!context) return;
-    const canvas = this.modelCanvasElement.nativeElement;
-    this.clearCanvas(canvas, context);
+    this.clearCanvas(this.modelCanvasElement.nativeElement, context);
 
     for (const mark of model.marks) {
       context.save();
@@ -564,15 +673,15 @@ export class PaintGame implements AfterViewInit, OnDestroy {
       context.shadowColor = mark.color;
       context.globalAlpha = mark.opacity;
       if (mark.kind === 'oval') {
-        traceOrganicBlob(context, mark.points, canvas.width, canvas.height);
+        traceOrganicBlob(context, mark.points, PAINT_CANVAS_WIDTH, PAINT_CANVAS_HEIGHT);
         context.shadowBlur = 18;
         context.fill();
       } else {
-        traceSmoothPath(context, mark.points, canvas.width, canvas.height);
+        traceSmoothPath(context, mark.points, PAINT_CANVAS_WIDTH, PAINT_CANVAS_HEIGHT);
         context.lineCap = 'round';
         context.lineJoin = 'round';
-        context.lineWidth = mark.width * canvas.width;
-        context.shadowBlur = Math.max(14, mark.width * canvas.width * 0.16);
+        context.lineWidth = mark.width * PAINT_CANVAS_WIDTH;
+        context.shadowBlur = Math.max(14, mark.width * PAINT_CANVAS_WIDTH * 0.16);
         context.stroke();
       }
       context.restore();
@@ -580,19 +689,39 @@ export class PaintGame implements AfterViewInit, OnDestroy {
   }
 
   private clearCanvas(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D): void {
-    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.clearRect(0, 0, PAINT_CANVAS_WIDTH, PAINT_CANVAS_HEIGHT);
     context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillRect(0, 0, PAINT_CANVAS_WIDTH, PAINT_CANVAS_HEIGHT);
+  }
+
+  private resetLocalPaintSurface(): void {
+    this.activeLocalStroke = null;
+    this.activePointerId = null;
+    this.pendingLocalPoints.length = 0;
+    this.pendingRemoteEvents.length = 0;
+    this.savedStrokeIds.clear();
+    this.seenStrokeIds.clear();
+    this.drawnModelGeneratedAt = null;
+    if (this.context) this.clearCanvas(this.canvasElement.nativeElement, this.context);
+    if (this.modelContext) this.clearCanvas(this.modelCanvasElement.nativeElement, this.modelContext);
+  }
+
+  private configureCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+    const devicePixelRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    canvas.width = Math.round(PAINT_CANVAS_WIDTH * devicePixelRatio);
+    canvas.height = Math.round(PAINT_CANVAS_HEIGHT * devicePixelRatio);
+    const context = canvas.getContext('2d');
+    context?.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    return context;
   }
 
   private createSprayBurst(center: PaintPoint): PaintPoint[] {
-    const canvas = this.canvasElement.nativeElement;
     return Array.from({ length: SPRAY_DROPLETS }, () => {
       const angle = Math.random() * Math.PI * 2;
       const distance = Math.sqrt(Math.random()) * 20;
       return {
-        x: Math.max(0, Math.min(1, center.x + Math.cos(angle) * distance / canvas.width)),
-        y: Math.max(0, Math.min(1, center.y + Math.sin(angle) * distance / canvas.height)),
+        x: Math.max(0, Math.min(1, center.x + Math.cos(angle) * distance / PAINT_CANVAS_WIDTH)),
+        y: Math.max(0, Math.min(1, center.y + Math.sin(angle) * distance / PAINT_CANVAS_HEIGHT)),
         radius: 1.2 + Math.random() * 3.2,
       };
     });

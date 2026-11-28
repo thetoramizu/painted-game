@@ -141,6 +141,19 @@ export class MysteryDrawingService {
     this.assertSuccess(result);
   }
 
+  async restartGame(): Promise<void> {
+    const result = await this.callRpc('restart_mystery_game', {
+      p_code: this.roomCode,
+      p_token: this.token,
+    });
+    if (!isRecord(result) || result['success'] !== true) {
+      throw new Error(isRecord(result) && typeof result['message'] === 'string'
+        ? result['message']
+        : 'Impossible de relancer le jeu.');
+    }
+    await this.refresh();
+  }
+
   private async heartbeat(): Promise<void> {
     if (!this.roomCode || !this.token) return;
     const connectionId = this.connectionId;

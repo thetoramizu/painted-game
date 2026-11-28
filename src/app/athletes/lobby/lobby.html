@@ -14,7 +14,7 @@
           (clicked)="goHome()" 
         />
         <p class="eyebrow">Salle d'attente</p>
-        <div style="width: 80px"></div> <!-- Spacer pour centrer l'eyebrow -->
+        <div aria-hidden="true" class="header-spacer"></div>
       </div>
       <h1>Choisissez votre jeu</h1>
       <p class="intro">
@@ -26,7 +26,13 @@
       <span class="code-label">Code de la salle</span>
       <div class="code-display">
         <span class="code-value">{{ snapshot.code }}</span>
-        <button type="button" class="copy-icon-btn" (click)="copyCode()" [title]="copied() ? 'Copié !' : 'Copier'">
+        <button
+          type="button"
+          class="copy-icon-btn"
+          (click)="copyCode()"
+          [attr.aria-label]="copied() ? 'Code copié' : 'Copier le code de salle'"
+          [attr.title]="copied() ? 'Copié !' : 'Copier'"
+        >
           @if (copied()) {
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon-success"><polyline points="20 6 9 17 4 12"></polyline></svg>
           } @else {
@@ -35,7 +41,7 @@
         </button>
       </div>
       @if (copied()) {
-        <span class="copy-toast">Copié dans le presse-papier !</span>
+        <span class="copy-toast" role="status" aria-live="polite">Copié dans le presse-papier !</span>
       }
     </section>
 
@@ -50,6 +56,7 @@
         <button
           type="button"
           class="seat game-option"
+          [attr.aria-pressed]="snapshot.gameType === 'athletes'"
           [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('athletes')"
         >
@@ -64,6 +71,7 @@
         <button
           type="button"
           class="seat game-option"
+          [attr.aria-pressed]="snapshot.gameType === 'mystery'"
           [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('mystery')"
         >
@@ -78,6 +86,7 @@
         <button
           type="button"
           class="seat game-option"
+          [attr.aria-pressed]="snapshot.gameType === 'paint'"
           [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('paint')"
         >
@@ -92,6 +101,7 @@
         <button
           type="button"
           class="seat game-option"
+          [attr.aria-pressed]="snapshot.gameType === 'portrait'"
           [disabled]="snapshot.mySeat !== 0 || isChangingGame()"
           (click)="selectGame('portrait')"
         >

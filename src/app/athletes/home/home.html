@@ -9,7 +9,7 @@
   </header>
 
   @if (error()) {
-    <p class="alert" role="alert">{{ error() }}</p>
+    <p class="alert" role="alert" aria-live="assertive">{{ error() }}</p>
   }
 
   <section class="panels">
@@ -28,7 +28,7 @@
         />
       </label>
       <button type="submit" class="btn btn-primary" [disabled]="busy() || !createPseudo().trim()">
-        Créer la salle
+        {{ busy() ? 'Création…' : 'Créer la salle' }}
       </button>
     </form>
 
@@ -62,7 +62,7 @@
         class="btn btn-secondary"
         [disabled]="busy() || joinCode().trim().length !== 6 || !joinPseudo.trim()"
       >
-        Rejoindre
+        {{ busy() ? 'Connexion…' : 'Rejoindre' }}
       </button>
     </form>
   </section>

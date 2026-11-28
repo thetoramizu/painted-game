@@ -55,7 +55,16 @@
         [finished]="game.phase === 'finished'"
       />
       @if (game.phase === 'finished' && isHost()) {
-        <button class="return-button" type="button" [disabled]="busy()" (click)="returnToLobby()">
+        <div class="finished-actions">
+          <button class="return-button replay-button" type="button" [disabled]="busy()" (click)="restartGame()">
+            {{ busy() ? 'Relance…' : 'Rejouer' }}
+          </button>
+          <button class="return-button" type="button" [disabled]="busy()" (click)="returnToLobby()">
+            Retourner au salon
+          </button>
+        </div>
+      } @else if (game.phase === 'finished') {
+        <button class="return-button" type="button" (click)="returnToLobbyAsPlayer()">
           Retourner au salon
         </button>
       }

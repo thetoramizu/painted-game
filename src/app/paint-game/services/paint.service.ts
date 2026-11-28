@@ -6,7 +6,7 @@ import type { RoomSnapshot } from '../../athletes/services/room.service';
 export type PaintPhase = 'observation' | 'painting' | 'results';
 export type PaintStrokeType = 'start' | 'move' | 'end';
 
-export const OBSERVATION_DURATION_SECONDS = 30;
+export const OBSERVATION_DURATION_SECONDS = 20;
 export const PAINTING_DURATION_SECONDS = 45;
 
 export interface PaintPoint {
@@ -28,6 +28,11 @@ export interface PaintStrokeEvent {
   color: string;
   type: PaintStrokeType;
   points?: PaintPoint[];
+}
+
+export interface PaintGameSession {
+  strokes: PaintStroke[];
+  state: PaintGameState | null;
 }
 
 export interface PaintPlayer {
@@ -77,10 +82,7 @@ export interface PaintGameState {
   revealUntilBySeat: Record<string, number>;
 }
 
-export type PaintGameEvent =
-  | { type: 'state'; state: PaintGameState }
-  | { type: 'request-state'; seat: number }
-  | { type: 'request-model'; seat: number };
+export type PaintGameEvent = { type: 'state-changed' };
 
 export const PAINT_PALETTE = ['#4f8cff', '#ff6b6b', '#2fbf71', '#f5a623'] as const;
 
@@ -248,9 +250,11 @@ export class PaintService {
   async joinPaintChannel(
     roomCode: string,
     mySeat: number,
+    token: string,
     onRemoteStroke: (event: PaintStrokeEvent) => void,
+    onStrokeSaved: () => void,
     onGameEvent: (event: PaintGameEvent) => void
-  ): Promise<PaintStroke[]> {
+  ): Promise<PaintGameSession> {
     this.leavePaintChannel();
 
     const channel = this.supabase.channel(`paint-${roomCode}`);
@@ -259,14 +263,19 @@ export class PaintService {
       const event = parsePaintStrokeEvent(message.payload, (seat, color) => this.isColorForSeat(seat, color));
       if (event && event.seat !== mySeat) onRemoteStroke(event);
     });
+    channel.on('broadcast', { event: 'stroke-saved' }, () => onStrokeSaved());
     channel.on('broadcast', { event: 'game' }, (message: { payload: unknown }) => {
       const event = parsePaintGameEvent(message.payload);
-      if (event && (event.type === 'state' || event.seat !== mySeat)) onGameEvent(event);
+      if (event) onGameEvent(event);
     });
 
     try {
       await this.waitForSubscription(channel);
-      return await this.getInitialStrokes(roomCode);
+      const [strokes, state] = await Promise.all([
+        this.getInitialStrokes(roomCode, token),
+        this.getPaintGameState(roomCode, token),
+      ]);
+      return { strokes, state };
     } catch (error) {
       this.leavePaintChannel();
       throw error;
@@ -280,15 +289,78 @@ export class PaintService {
     return this.sendBroadcast('stroke', event);
   }
 
-  async sendGameEvent(event: PaintGameEvent): Promise<void> {
-    if (!parsePaintGameEvent(event)) throw new Error('L’événement de partie envoyé est invalide.');
-    return this.sendBroadcast('game', event);
+  async notifyStrokeSaved(): Promise<void> {
+    return this.sendBroadcast('stroke-saved', { type: 'saved' });
   }
 
-  async saveStroke(stroke: PaintStroke, roomCode: string): Promise<void> {
+  async saveGameState(state: PaintGameState, roomCode: string, token: string): Promise<boolean> {
+    const { data, error } = await this.supabase.rpc('save_paint_game_state', {
+      p_code: roomCode,
+      p_token: token,
+      p_state: state,
+    });
+    if (error) throw new Error(error.message || 'Impossible d’enregistrer l’état de la partie.');
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!isRecord(result)) throw new Error('La réponse de sauvegarde de la partie est invalide.');
+    if (result['success'] === true) return true;
+    if (result['message'] === 'Une version plus récente de la partie existe déjà') return false;
+    throw new Error(
+      typeof result['message'] === 'string'
+        ? result['message']
+        : 'Impossible d’enregistrer l’état de la partie.',
+    );
+  }
+
+  async requestModelReveal(roomCode: string, token: string): Promise<PaintGameState> {
+    const { data, error } = await this.supabase.rpc('request_paint_model_reveal', {
+      p_code: roomCode,
+      p_token: token,
+    });
+    if (error) throw new Error(error.message || 'Impossible de demander à revoir le modèle.');
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (!isRecord(result) || result['success'] !== true) {
+      throw new Error(
+        isRecord(result) && typeof result['message'] === 'string'
+          ? result['message']
+          : 'La réponse de demande de modèle est invalide.',
+      );
+    }
+
+    const state = parsePaintGameState(result['state']);
+    if (!state) throw new Error('L’état reçu après la demande de modèle est invalide.');
+    return state;
+  }
+
+  async notifyGameStateChanged(): Promise<void> {
+    return this.sendBroadcast('game', { type: 'state-changed' });
+  }
+
+  async restartGame(roomCode: string, token: string) {
+    return this.supabase.rpc('restart_paint_game', {
+      p_code: roomCode,
+      p_token: token,
+    });
+  }
+
+  async tickGameState(roomCode: string, token: string): Promise<PaintGameState | null> {
+    const { data, error } = await this.supabase.rpc('tick_paint_game_state', {
+      p_code: roomCode,
+      p_token: token,
+    });
+    if (error) throw new Error(error.message || 'Impossible de mettre à jour le minuteur de la partie.');
+    if (data === null) return null;
+    const state = parsePaintGameState(data);
+    if (!state) throw new Error('L’état reçu après l’avancée du minuteur est invalide.');
+    return state;
+  }
+
+  async saveStroke(stroke: PaintStroke, roomCode: string, token: string): Promise<void> {
     const { data, error } = await this.supabase.rpc('add_paint_stroke', {
       p_stroke_id: stroke.id,
       p_room_code: roomCode,
+      p_token: token,
       p_seat: stroke.seat,
       p_color: stroke.color,
       p_points: stroke.points,
@@ -310,7 +382,27 @@ export class PaintService {
     if (channel) void this.supabase.removeChannel(channel);
   }
 
-  private async sendBroadcast(eventName: 'stroke' | 'game', payload: unknown): Promise<void> {
+  async getPaintGameState(roomCode: string, token: string): Promise<PaintGameState | null> {
+    const { data, error } = await this.supabase.rpc('get_paint_game_state', {
+      p_code: roomCode,
+      p_token: token,
+    });
+    if (error) throw new Error(error.message || 'Impossible de charger l’état de la partie.');
+    if (data === null) return null;
+
+    const state = parsePaintGameState(data);
+    if (!state) throw new Error('L’état enregistré de la partie est invalide.');
+    return state;
+  }
+
+  async getStrokes(roomCode: string, token: string): Promise<PaintStroke[]> {
+    return this.getInitialStrokes(roomCode, token);
+  }
+
+  private async sendBroadcast(
+    eventName: 'stroke' | 'stroke-saved' | 'game',
+    payload: unknown
+  ): Promise<void> {
     const channel = this.channelRef;
     if (!channel) throw new Error('Le canal de peinture n’est pas connecté.');
 
@@ -322,9 +414,10 @@ export class PaintService {
     return send;
   }
 
-  private async getInitialStrokes(roomCode: string): Promise<PaintStroke[]> {
+  private async getInitialStrokes(roomCode: string, token: string): Promise<PaintStroke[]> {
     const { data, error } = await this.supabase.rpc('get_paint_strokes', {
       p_room_code: roomCode,
+      p_token: token,
     });
     if (error) throw new Error(error.message || 'Impossible de charger la toile.');
     if (!Array.isArray(data)) throw new Error('La réponse contenant la toile est invalide.');
@@ -365,18 +458,9 @@ export class PaintService {
 }
 
 export function parsePaintGameEvent(value: unknown): PaintGameEvent | null {
-  if (!isRecord(value)) return null;
-  if (value['type'] === 'state') {
-    const state = parsePaintGameState(value['state']);
-    return state ? { type: 'state', state } : null;
-  }
-  if (
-    (value['type'] === 'request-state' || value['type'] === 'request-model') &&
-    isSeat(value['seat'])
-  ) {
-    return { type: value['type'], seat: value['seat'] };
-  }
-  return null;
+  return isRecord(value) && value['type'] === 'state-changed'
+    ? { type: 'state-changed' }
+    : null;
 }
 
 function parsePaintGameState(value: unknown): PaintGameState | null {
@@ -485,7 +569,7 @@ function parsePaintModel(value: unknown): PaintModel | null {
       mark['opacity'] < 0.4 ||
       mark['opacity'] > 0.8 ||
       (mark['kind'] === 'sweep' &&
-        (typeof mark['width'] !== 'number' || !Number.isFinite(mark['width']) || mark['width'] < 0.065 || mark['width'] > 0.15))
+        (typeof mark['width'] !== 'number' || !Number.isFinite(mark['width']) || mark['width'] < 0.10 || mark['width'] > 0.30))
     ) {
       return null;
     }
@@ -673,8 +757,8 @@ function createOvalMark(
   placement: BlobPlacement,
   random: () => number,
 ): PaintModelMark {
-  const radiusX = randomBetween(random, 0.18, 0.27);
-  const radiusY = randomBetween(random, 0.13, 0.2);
+  const radiusX = randomBetween(random, 0.30, 0.42);
+  const radiusY = randomBetween(random, 0.22, 0.32);
   const centerX = clamp(placement.x, radiusX * 1.25 + 0.02, 1 - radiusX * 1.25 - 0.02);
   const centerY = clamp(placement.y, radiusY * 1.25 + 0.02, 1 - radiusY * 1.25 - 0.02);
   const pointCount = 10 + Math.floor(random() * 3);
@@ -708,11 +792,11 @@ function createSweepMark(
   accent = false,
 ): PaintModelMark {
   const width = accent
-    ? randomBetween(random, 0.065, 0.12)
-    : randomBetween(random, 0.095, 0.15);
-  const radiusX = accent
     ? randomBetween(random, 0.16, 0.24)
-    : randomBetween(random, 0.2, 0.29);
+    : randomBetween(random, 0.20, 0.30);
+  const radiusX = accent
+    ? randomBetween(random, 0.32, 0.44)
+    : randomBetween(random, 0.36, 0.48);
   const radiusY = accent
     ? randomBetween(random, 0.075, 0.13)
     : randomBetween(random, 0.09, 0.16);

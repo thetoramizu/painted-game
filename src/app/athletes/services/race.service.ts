@@ -1,6 +1,8 @@
-import { computed, Injectable, signal } from '@angular/core';
+import { computed, inject, Injectable, signal } from '@angular/core';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 import { ATHLETES, type Athlete, type AthleteId } from '../models/athletes';
-import { createRace, playTurn, racerPoints, TRACK_LENGTH, type RaceState } from '../models/race-engine';
+import { racerPoints, TRACK_LENGTH, type RaceState } from '../models/race-engine';
+import { SupabaseService } from '../core/supabase-client';
 import { RoomService } from './room.service';
 
 export interface RacePlayer {
@@ -21,13 +23,12 @@ export interface RaceSetupState {
 }
 
 /**
- * Orchestration locale de la course : choix des athlètes puis déroulement
- * des tours via le moteur pur (models/race-engine). La synchronisation
- * multijoueur (Supabase) se branchera ici plus tard.
+ * Orchestration de la course : les choix et les tours sont validés par Supabase.
  */
 @Injectable({ providedIn: 'root' })
 export class RaceService {
   readonly athletes: readonly Athlete[] = ATHLETES;
+  private readonly supabase = inject(SupabaseService).client;
 
   private readonly setupSignal = signal<RaceSetupState | null>(null);
   private readonly raceSignal = signal<RaceState | null>(null);
@@ -42,38 +43,23 @@ export class RaceService {
 
   readonly myTurn = computed(() => {
     const race = this.raceSignal();
-    if (!race || race.phase !== 'playing') return false;
-    if (!this.isLocalHost()) return true; // en multijoueur réel, chacun joue son tour
-    return race.turnSeat === this.mySeat();
+    return race?.phase === 'playing' && race.turnSeat === this.mySeat();
   });
 
   constructor(private readonly roomService: RoomService) {}
-
-  private isLocalHost(): boolean {
-    const setup = this.setupSignal();
-    if (!setup) return false;
-    const storedPseudo = localStorage.getItem('athletes-room-token:' + setup.code + ':pseudo');
-    return !storedPseudo || storedPseudo === setup.players[0].pseudo;
-  }
 
   /** Démarre la préparation de course depuis le lobby. */
   async startSetup(code: string, players: RacePlayer[], currentSeat: number = 0): Promise<void> {
     const sorted = [...players].sort((a, b) => a.seat - b.seat);
     const picks = await this.fetchPicks(code);
-    // Validation : picks doit contenir des entrées (même si object, pas tableau)
-    // L'ancien check Array.isArray était incorrect pour un Record type
-    if (Object.keys(picks).length === 0) {
-      console.error('startSetup: fetchPicks n\'a retourné aucun pick', picks);
-      // Initialiser avec des picks par défaut (personne choisi)
-      this.setupSignal.set({ code, players: sorted, picks: {}, phase: 'setup' });
-      this.currentSeat.set(currentSeat);
-      return;
-    }
     this.setupSignal.set({ code, players: sorted, picks, phase: 'setup' });
+    this.raceSignal.set(null);
     this.currentSeat.set(currentSeat);
   }
 
   clear(): void {
+    this.unsubscribeFromRoomPicks();
+    this.unsubscribeFromRace();
     this.setupSignal.set(null);
     this.raceSignal.set(null);
   }
@@ -87,16 +73,14 @@ export class RaceService {
   }
 
   /** Enregistrer le choix d'un athlète pour le joueur local et le diffuser à la salle. */
-  selectAthlete(athleteId: AthleteId): void {
+  async selectAthlete(athleteId: AthleteId): Promise<void> {
     const setup = this.setupSignal();
     if (!setup || setup.phase !== 'setup') return;
     if (!this.isKnownAthlete(athleteId)) return;
+    const token = this.roomService.readToken(setup.code);
+    if (!token) throw new Error('Votre session de salle est introuvable.');
+    await this.roomService.updatePick(setup.code, token, this.currentSeat(), athleteId);
     const picks = { ...setup.picks, [this.currentSeat()]: athleteId };
-    // Enregistrer dans la base Supabase (fiable aussi si on bascule sur un autre onglet)
-    // On passe le siège au lieu du pseudo pour être robuste aux doublons de pseudo
-    this.roomService.updatePick(setup.code, this.currentSeat(), athleteId).catch(() => {
-      // En cas d'erreur, on continue avec le pick local
-    });
     this.setupSignal.set({ ...setup, picks });
   }
 
@@ -107,55 +91,74 @@ export class RaceService {
   }
 
   /** Lance la vraie course avec le moteur de règles. */
-  launchRace(): boolean {
+  async launchRace(): Promise<boolean> {
     const setup = this.setupSignal();
-    if (!setup || setup.phase !== 'setup' || !this.allPicked()) return false;
-    const racers = setup.players.map((player) => ({
-      seat: player.seat,
-      pseudo: player.pseudo,
-      athlete: setup.picks[player.seat] as AthleteId,
-    }));
-    this.raceSignal.set(createRace(racers));
-    this.setupSignal.set({ ...setup, phase: 'race' });
+    if (
+      !setup ||
+      setup.phase !== 'setup' ||
+      this.currentSeat() !== 0 ||
+      !this.allPicked()
+    ) return false;
+    const token = this.roomService.readToken(setup.code);
+    if (!token) throw new Error('Votre session de salle est introuvable.');
+    const { data, error } = await this.supabase.rpc('start_athlete_race', {
+      p_code: setup.code,
+      p_token: token,
+    });
+    if (error) throw new Error(error.message || 'Impossible de lancer la course.');
+    const race = parseRaceState(data);
+    if (!race) throw new Error('Le serveur a retourné un état de course invalide.');
+    this.setRaceState(race);
     return true;
   }
 
-  /** Joue le tour du meneur (nous) : dé aléatoire ou pouvoir « Jog » du Génie. */
-  playMyTurn(useJog = false): DiceResult | null {
-    const race = this.raceSignal();
-    if (!race || race.phase !== 'playing') return null;
-    if (this.isLocalHost() && race.turnSeat !== this.mySeat()) return null;
-
-    const mover = race.racers.find((racer) => racer.seat === race.turnSeat);
-    if (!mover) return null;
-    if (useJog && mover.athlete !== 'genie') return null;
-
-    const roll = 1 + Math.floor(Math.random() * 6);
-    try {
-      this.raceSignal.set(playTurn(race, { seat: race.turnSeat, roll, useJog }));
-    } catch {
-      return null;
+  async restartRace(): Promise<void> {
+    const setup = this.setupSignal();
+    if (!setup || this.currentSeat() !== 0) throw new Error('Seul le chef de salle peut relancer la course.');
+    const token = this.roomService.readToken(setup.code);
+    if (!token) throw new Error('Votre session de salle est introuvable.');
+    const { data, error } = await this.supabase.rpc('restart_athlete_race', {
+      p_code: setup.code,
+      p_token: token,
+    });
+    if (error) throw new Error(error.message || 'Impossible de relancer la course.');
+    if (!isRecord(data) || data['success'] !== true) {
+      throw new Error(typeof data?.['message'] === 'string' ? data['message'] : 'Impossible de relancer la course.');
     }
-    return { roll, useJog };
+    const race = parseRaceState(data['state']);
+    if (!race) throw new Error('Le serveur a retourné un état de course invalide.');
+    this.setRaceState(race);
   }
 
-  /** Joue un tour avec un dé aléatoire, quel que soit le joueur (bots locaux). */
-  playTurnWithRoll(seat: number): DiceResult | null {
+  /** Demande au serveur de valider et jouer le tour du siège courant. */
+  async playMyTurn(useJog = false): Promise<DiceResult> {
+    const setup = this.setupSignal();
     const race = this.raceSignal();
-    if (!race || race.phase !== 'playing' || race.turnSeat !== seat) return null;
-    const roll = 1 + Math.floor(Math.random() * 6);
-    try {
-      this.raceSignal.set(playTurn(race, { seat, roll, useJog: false }));
-    } catch {
-      return null;
+    if (!setup || !race || race.phase !== 'playing' || race.turnSeat !== this.currentSeat()) {
+      throw new Error("Ce n'est pas votre tour.");
     }
-    return { roll, useJog: false };
+    const token = this.roomService.readToken(setup.code);
+    if (!token) throw new Error('Votre session de salle est introuvable.');
+    const { data, error } = await this.supabase.rpc('play_athlete_turn', {
+      p_code: setup.code,
+      p_token: token,
+      p_use_jog: useJog,
+    });
+    if (error) throw new Error(error.message || 'Impossible de jouer ce tour.');
+    if (!isRecord(data) || typeof data['roll'] !== 'number' || typeof data['useJog'] !== 'boolean') {
+      throw new Error('Le serveur a retourné un résultat de tour invalide.');
+    }
+    const nextRace = parseRaceState(data['state']);
+    if (!nextRace) throw new Error('Le serveur a retourné un état de course invalide.');
+    this.setRaceState(nextRace);
+    return { roll: data['roll'], useJog: data['useJog'] };
   }
 
   pointsOf = racerPoints;
   readonly trackLength = TRACK_LENGTH;
 
-  private roomPickSubscription?: (() => void)[];
+  private roomPickSubscription?: () => void;
+  private raceChannel?: RealtimeChannel;
 
   /**
    * Écouter les choix des autres joueurs en temps réel pour la salle.
@@ -164,20 +167,72 @@ export class RaceService {
   subscribeToRoomPicks(code: string): void {
     this.unsubscribeFromRoomPicks();
 
-    const callbacks = [
-      (seat: number, athleteId: string | null) => this.mergePickFromDb(seat, athleteId),
-    ];
-
-    this.roomPickSubscription = callbacks.map((cb) => {
-      return this.roomService.subscribeToRoomPicks(code, cb);
-    });
+    this.roomPickSubscription = this.roomService.subscribeToRoomPicks(
+      code,
+      (seat, _pseudo, athleteId) => this.mergePickFromDb(seat, athleteId),
+    );
   }
 
   public unsubscribeFromRoomPicks(): void {
-    if (this.roomPickSubscription) {
-      this.roomPickSubscription.forEach((unsub) => unsub());
-      this.roomPickSubscription = undefined;
-    }
+    this.roomPickSubscription?.();
+    this.roomPickSubscription = undefined;
+  }
+
+  async subscribeToRace(code: string): Promise<void> {
+    this.unsubscribeFromRace();
+    const channel = this.supabase
+      .channel(`athlete-race-${code}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'athlete_races', filter: `room_code=eq.${code}` },
+        (payload) => {
+          const race = isRecord(payload.new) ? parseRaceState(payload.new['state']) : null;
+          if (race && race.revision > (this.raceSignal()?.revision ?? 0)) this.setRaceState(race);
+        },
+      );
+    this.raceChannel = channel;
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('Le canal de course ne répond pas.'));
+      }, 10_000);
+
+      channel.subscribe((status) => {
+        if (settled) return;
+        if (status === 'SUBSCRIBED') {
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          settled = true;
+          clearTimeout(timeout);
+          reject(new Error('Connexion à la course impossible.'));
+        }
+      });
+    }).catch((error: unknown) => {
+      this.unsubscribeFromRace();
+      throw error;
+    });
+  }
+
+  unsubscribeFromRace(): void {
+    if (this.raceChannel) void this.supabase.removeChannel(this.raceChannel);
+    this.raceChannel = undefined;
+  }
+
+  async loadRace(code: string, token: string): Promise<void> {
+    const { data, error } = await this.supabase.rpc('get_athlete_race', {
+      p_code: code,
+      p_token: token,
+    });
+    if (error) throw new Error(error.message || 'Impossible de charger la course.');
+    if (data === null) return;
+    const race = parseRaceState(data);
+    if (!race) throw new Error('Le serveur a retourné un état de course invalide.');
+    if (race.revision > (this.raceSignal()?.revision ?? 0)) this.setRaceState(race);
   }
 
   private mergePickFromDb(seat: number, athleteId: string | null): void {
@@ -187,13 +242,6 @@ export class RaceService {
     const isKnown = this.isKnownAthlete(athleteId);
     const newPicks = { ...setup.picks, [seat]: isKnown ? athleteId : null };
     this.setupSignal.set({ ...setup, picks: newPicks });
-  }
-
-  private getMyPseudo(code: string, players: RacePlayer[]): string {
-    const storedPseudo = localStorage.getItem('athletes-room-token:' + code + ':pseudo');
-    if (storedPseudo) return storedPseudo;
-    const me = players.find((player) => player.seat === this.currentSeat());
-    return me?.pseudo ?? '';
   }
 
   private isKnownAthlete(value: unknown): value is AthleteId {
@@ -206,30 +254,92 @@ export class RaceService {
    */
   private fetchPicks(code: string): Promise<Record<number, AthleteId | null>> {
     return this.roomService.getPicks(code).then((rows) => {
-      // Gérer le cas où rows est null, undefined ou un objet non-tableau
-      let rowsArray: { seat: number; athlete_id: string }[] = [];
-      if (Array.isArray(rows)) {
-        rowsArray = rows;
-      } else if (rows && typeof rows === 'object') {
-        // Si c'est un objet comme {0: null, 1: null}, convertir les valeurs en tableau
-        console.warn('fetchPicks: rows est un objet, conversion en tableau', rows);
-        // Casters en any pour contourner le typage strict d'Object.values sur unknown
-        rowsArray = Object.values(rows as any).filter((v: any) => v !== null && v !== undefined && typeof v === 'object') as { seat: number; athlete_id: string }[];
-      }
-
-      // Sécurité : rowsArray doit être un tableau valide
-      if (!Array.isArray(rowsArray) || rowsArray.length === 0) {
-        console.warn('fetchPicks: pas de données valides, retour de picks vides', rows);
-        const picks: Record<number, AthleteId | null> = {};
-        return picks;
-      }
-
       const picks: Record<number, AthleteId | null> = {};
-      for (const row of rowsArray) {
-        const seat = row.seat;
-        picks[seat] = this.isKnownAthlete(row.athlete_id) ? row.athlete_id : null;
+      for (const row of rows) {
+        if (!Number.isInteger(row.seat) || row.seat < 0 || row.seat > 3) continue;
+        picks[row.seat] = this.isKnownAthlete(row.athlete_id) ? row.athlete_id : null;
       }
       return picks;
     });
   }
+
+  private setRaceState(race: RaceState): void {
+    this.raceSignal.set(race);
+    const setup = this.setupSignal();
+    if (setup) this.setupSignal.set({ ...setup, phase: 'race' });
+  }
+}
+
+function parseRaceState(value: unknown): RaceState | null {
+  if (!isRecord(value)) return null;
+  const phase = value['phase'];
+  const turnSeat = value['turnSeat'];
+  const racers = value['racers'];
+  const events = value['events'];
+  const revision = value['revision'];
+  if (
+    (phase !== 'playing' && phase !== 'finished') ||
+    !Number.isInteger(turnSeat) ||
+    typeof turnSeat !== 'number' ||
+    turnSeat < 0 ||
+    turnSeat > 3 ||
+    !Array.isArray(racers) ||
+    racers.length < 2 ||
+    racers.length > 4 ||
+    !Array.isArray(events) ||
+    !Number.isInteger(revision) ||
+    typeof revision !== 'number' ||
+    revision < 1
+  ) return null;
+
+  const parsedEvents = events.filter((event): event is string => typeof event === 'string');
+  if (parsedEvents.length !== events.length) return null;
+  const parsedRacers = racers.map(parseRacer);
+  if (parsedRacers.some((racer) => racer === null)) return null;
+  const validRacers = parsedRacers.filter((racer): racer is NonNullable<typeof racer> => racer !== null);
+  if (new Set(validRacers.map((racer) => racer.seat)).size !== validRacers.length) return null;
+  if (phase === 'playing' && !validRacers.some((racer) => racer.seat === turnSeat && racer.finishRank === null)) {
+    return null;
+  }
+  return {
+    phase,
+    turnSeat,
+    racers: validRacers,
+    events: parsedEvents,
+    revision,
+  };
+}
+
+function parseRacer(value: unknown): RaceState['racers'][number] | null {
+  if (!isRecord(value)) return null;
+  const { seat, pseudo, athlete, position, finishRank, bronze } = value;
+  const knownAthlete = ATHLETES.find((candidate) => candidate.id === athlete);
+  if (
+    !Number.isInteger(seat) ||
+    typeof seat !== 'number' ||
+    seat < 0 ||
+    seat > 3 ||
+    typeof pseudo !== 'string' ||
+    !knownAthlete ||
+    !Number.isInteger(position) ||
+    typeof position !== 'number' ||
+    position < 0 ||
+    position > TRACK_LENGTH ||
+    (finishRank !== null && (!Number.isInteger(finishRank) || typeof finishRank !== 'number' || finishRank < 1 || finishRank > 4)) ||
+    !Number.isInteger(bronze) ||
+    typeof bronze !== 'number' ||
+    bronze < 0
+  ) return null;
+  return {
+    seat,
+    pseudo,
+    athlete: knownAthlete.id,
+    position,
+    finishRank: finishRank === null ? null : finishRank,
+    bronze,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

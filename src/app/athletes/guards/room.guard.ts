@@ -1,10 +1,10 @@
 import { inject } from '@angular/core';
 import { CanActivateFn, Router } from '@angular/router';
-import { SupabaseService } from '../core/supabase-client';
+import { RoomService } from '../services/room.service';
 
-export const roomGuard: CanActivateFn = (route, state) => {
+export const roomGuard: CanActivateFn = async (route) => {
   const router = inject(Router);
-  const supabase = inject(SupabaseService).client;
+  const roomService = inject(RoomService);
 
   // Récupérer le code depuis les paramètres de route via route.paramMap
   // (et non state.paramMap qui n'existe pas sur RouterStateSnapshot)
@@ -16,12 +16,18 @@ export const roomGuard: CanActivateFn = (route, state) => {
   }
 
   // Vérifier que l'utilisateur a un token valide pour cette salle
-  const token = localStorage.getItem(`athletes-room-token:${code}`);
+  const token = roomService.readToken(code);
 
   if (!token) {
-    router.navigate(['/']);
+    void router.navigate(['/']);
     return false;
   }
 
-  return true;
+  try {
+    await roomService.getRoom(code, token);
+    return true;
+  } catch {
+    void router.navigate(['/']);
+    return false;
+  }
 };

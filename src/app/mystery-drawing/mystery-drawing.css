@@ -24,6 +24,8 @@ h1 { margin: 0; font-size: clamp(32px, 5vw, 48px); }
 .waiting-choice { margin-top: 12px; padding: 18px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface); text-align: center; }
 .return-button { margin-top: 12px; border: 0; border-radius: 999px; padding: 11px 16px; background: var(--color-primary); color: white; font: inherit; font-weight: 800; cursor: pointer; }
 .return-button:disabled { opacity: .6; cursor: wait; }
+.finished-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.replay-button { background: var(--color-accent); color: var(--color-ink); }
 .error-message { margin-top: 14px; padding: 12px 16px; border-radius: 12px; background: #fde8e6; color: #a32116; font-weight: 700; }
 .loading-message { padding: 50px 0; color: var(--color-muted); text-align: center; }
 @media (max-width: 900px) {

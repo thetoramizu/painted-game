@@ -20,6 +20,7 @@ export interface RaceState {
   turnSeat: number;
   racers: Racer[];
   events: string[];
+  revision: number;
 }
 
 export interface TurnInput {
@@ -37,6 +38,7 @@ export function createRace(players: { seat: number; pseudo: string; athlete: Ath
     turnSeat: racers[0].seat,
     racers,
     events: ['La course commence !'],
+    revision: 1,
   };
 }
 
@@ -87,7 +89,7 @@ export function playTurn(state: RaceState, input: TurnInput): RaceState {
     applyStopPowers(racers, mover, events);
   }
 
-  return { ...withRaceEnd(racers, input.seat), events };
+  return { ...withRaceEnd(racers, input.seat), events, revision: state.revision + 1 };
 }
 
 function moveRacer(racers: Racer[], racer: Racer, distance: number, events: string[]): void {
@@ -100,17 +102,12 @@ function moveRacer(racers: Racer[], racer: Racer, distance: number, events: stri
 
 function applyStopPowers(racers: Racer[], mover: Racer, events: string[]): void {
   const occupants = racers.filter((racer) => isActive(racer) && racer.position === mover.position);
-  if (occupants.length !== 2) return;
-
-  for (const racer of racers) {
-    if (racer.athlete === 'tremplin-devin' && isActive(racer)) {
-      events.push(`${racer.pseudo} rebondit sur son tremplin et avance de ${TREMPLIN_BOOST} cases.`);
-      moveRacer(racers, racer, TREMPLIN_BOOST, events);
-    }
-  }
+  if (occupants.length !== 2 || mover.athlete !== 'tremplin-devin') return;
+  events.push(`${mover.pseudo} rebondit sur son tremplin et avance de ${TREMPLIN_BOOST} cases.`);
+  moveRacer(racers, mover, TREMPLIN_BOOST, events);
 }
 
-function withRaceEnd(racers: Racer[], currentSeat: number): Omit<RaceState, 'events'> {
+function withRaceEnd(racers: Racer[], currentSeat: number): Omit<RaceState, 'events' | 'revision'> {
   const finishedCount = racers.filter((racer) => racer.finishRank !== null).length;
   const activeCount = racers.filter(isActive).length;
 

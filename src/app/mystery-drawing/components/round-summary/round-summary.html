@@ -1,23 +1,14 @@
 <section class="summary-card" aria-live="polite">
-  <p class="eyebrow">{{ finished ? 'Partie terminée' : 'Fin de la manche' }}</p>
-  <h2>{{ finished ? 'La partie est terminée !' : 'Le mot était : ' + (summary?.['word'] ?? '…') }}</h2>
   @if (!finished) {
-    @if (summary?.['abandoned'] === true) {
-      <p>Le dessinateur n’est pas revenu à temps. Son tour est terminé.</p>
-    }
-    <div class="results">
-      <p><strong>A trouvé :</strong> {{ getNames('foundSeats').join(', ') || 'Personne' }}</p>
-      <p><strong>N’a pas trouvé :</strong> {{ getNames('missedSeats').join(', ') || 'Personne' }}</p>
-    </div>
-    <p>La toile reste affichée pendant la transition vers la prochaine manche.</p>
+    <h2>Le mot était : {{ summary?.['word'] ?? '…' }}</h2>
+    <p><strong>Joueurs ayant trouvé :</strong> {{ getNames('foundSeats').join(', ') || 'Personne' }}</p>
   } @else {
-    <p>Merci d’avoir joué ! Voici les mots trouvés pendant la partie.</p>
-    <h3>Mots trouvés</h3>
+    <h2>Récapitulatif</h2>
     <ul class="found-counts">
       @for (player of players; track player.seat) {
         <li>
           <span>{{ player.pseudo }}</span>
-          <strong>{{ getFoundCount(player.seat) }}/{{ totalRounds - 1 }}</strong>
+          <strong>{{ getFoundCount(player.seat) }}/{{ totalRounds > 1 ? totalRounds - 1 : 1 }}</strong>
         </li>
       }
     </ul>

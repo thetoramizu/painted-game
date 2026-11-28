@@ -26,8 +26,8 @@ describe('PaintService', () => {
     for (const mark of model.marks) {
       expect(colors).toContain(mark.color);
       if (mark.kind === 'sweep') {
-        expect(mark.width).toBeGreaterThanOrEqual(0.065);
-        expect(mark.width).toBeLessThanOrEqual(0.15);
+        expect(mark.width).toBeGreaterThanOrEqual(0.10);
+        expect(mark.width).toBeLessThanOrEqual(0.30);
         expect(mark.points).toHaveLength(6);
       }
       for (const point of mark.points) {

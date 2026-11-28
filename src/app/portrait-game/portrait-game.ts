@@ -30,14 +30,15 @@ interface PortraitGameState {
 }
 
 interface PortraitBroadcast {
-  type: 'state' | 'request-state';
+  type: 'state' | 'request-state' | 'assets-ready';
   seat?: number;
+  revision?: number;
   state?: PortraitGameState;
 }
 
 const CANVAS_WIDTH = 1000;
 const CANVAS_HEIGHT = 700;
-const OBSERVATION_SECONDS = 30;
+const OBSERVATION_SECONDS = 20;
 
 @Component({
   selector: 'app-portrait-game',
@@ -70,6 +71,8 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
   protected readonly players = signal<{ seat: number; pseudo: string }[]>([]);
   protected readonly isHost = signal(false);
   protected readonly isLoading = signal(true);
+  protected readonly isReturning = signal(false);
+  protected readonly isRestarting = signal(false);
 
   private channel: RealtimeChannel | null = null;
   private unsubscribeRoom?: () => void;
@@ -86,10 +89,17 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
   private movingDirection = 1;
   private lastFrameTime = 0;
   private revision = 0;
+  private assetsReadyRevision = -1;
+  private loadedModelGeneratedAt: number | null = null;
+  private loadingModelGeneratedAt: number | null = null;
+  private readonly readySeats = new Set<number>();
   private movementStartedAt = 0;
   private readonly imageCache = new Map<string, HTMLImageElement>();
 
   ngAfterViewInit(): void {
+    this.configureCanvas(this.canvasRef?.nativeElement);
+    this.configureCanvas(this.modelCanvasRef?.nativeElement);
+    this.configureCanvas(this.reconstructedCanvasRef?.nativeElement);
     void this.initialize();
   }
 
@@ -122,23 +132,73 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
       this.movingY = validatedY;
       if (this.turnIndex >= this.turns.length) this.finishGame();
     }
+    this.revision += 1;
     this.updateInterface();
     this.broadcastState();
+    this.drawCanvasNow();
   }
 
-  protected startNewGame(): void {
+  protected async startNewGame(): Promise<void> {
     if (!this.isHost()) return;
-    this.beginNewGame();
+    if (this.isRestarting()) return;
+    this.isRestarting.set(true);
+    const code = this.roomCode();
+    const token = this.roomService.readToken(code);
+    if (!token) {
+      this.error.set('Votre session de salle est introuvable.');
+      this.isRestarting.set(false);
+      return;
+    }
+    try {
+      const { data, error } = await this.supabase.rpc('restart_portrait_game', {
+        p_code: code,
+        p_token: token,
+      });
+      if (error) throw new Error(error.message || 'Impossible de relancer le portrait.');
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!isRecord(result) || result['success'] !== true) {
+        throw new Error(isRecord(result) && typeof result['message'] === 'string'
+          ? result['message']
+          : 'Impossible de relancer le portrait.');
+      }
+      this.beginNewGame();
+    } catch (error) {
+      this.error.set(error instanceof Error ? error.message : 'Impossible de relancer le portrait.');
+    } finally {
+      this.isRestarting.set(false);
+    }
+  }
+
+  protected async returnToLobby(): Promise<void> {
+    if (!this.isHost() || this.isReturning()) return;
+    const code = this.roomCode();
+    const token = this.roomService.readToken(code);
+    if (!code || !token) return;
+    this.isReturning.set(true);
+    try {
+      await this.roomService.finishRoomGame(code, token);
+      await this.router.navigate(['/salon', code]);
+    } catch (error) {
+      this.error.set(error instanceof Error ? error.message : 'Impossible de retourner au salon.');
+    } finally {
+      this.isReturning.set(false);
+    }
+  }
+
+  protected async returnToLobbyAsPlayer(): Promise<void> {
+    const code = this.roomCode();
+    if (code) await this.router.navigate(['/salon', code]);
   }
 
   protected leaveGame(): void {
-    void this.router.navigate(['/']);
+    if (!window.confirm('Quitter le portrait décalé ? Votre progression restera enregistrée.')) return;
+    void this.router.navigate(['/salon', this.roomCode()]);
   }
 
   private async initialize(): Promise<void> {
     const code = this.route.snapshot.paramMap.get('code') ?? '';
-    const pseudo = this.roomService.readPseudo(code);
-    if (!code || !pseudo) {
+    const token = this.roomService.readToken(code);
+    if (!code || !token) {
       this.error.set('Vous n’avez pas accès à cette salle.');
       this.isLoading.set(false);
       return;
@@ -146,7 +206,7 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
     this.roomCode.set(code);
 
     try {
-      const snapshot = await this.roomService.getRoom(code, pseudo);
+      const snapshot = await this.roomService.getRoom(code, token);
       if (snapshot.gameType !== 'portrait' || snapshot.status !== 'playing') {
         await this.router.navigate(['/salon', code]);
         return;
@@ -183,11 +243,27 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
           }
         });
       });
-      this.animationFrame = requestAnimationFrame((time) => this.drawFrame(time));
+      const stateResponse = await this.supabase.rpc('get_portrait_game_state', {
+        p_code: code,
+        p_token: token,
+      });
+      const storedState = stateResponse.error ? null : parsePortraitGameState(stateResponse.data);
+      if (storedState) this.applyStoredState(storedState);
+      this.drawCanvasNow();
       this.isLoading.set(false);
 
-      if (this.isHost()) this.beginNewGame();
-      else await this.channel.send({ type: 'broadcast', event: 'portrait', payload: { type: 'request-state', seat: this.mySeat } });
+      if (storedState) {
+        if (storedState.phase === 'preparation') {
+          if (this.isHost()) this.broadcastState(false);
+          void this.prepareModel(storedState.revision);
+        } else if (storedState.phase === 'observation') {
+          this.startServerClock();
+        }
+      } else if (this.isHost()) {
+        this.beginNewGame();
+      } else {
+        await this.channel.send({ type: 'broadcast', event: 'portrait', payload: { type: 'request-state', seat: this.mySeat } });
+      }
     } catch (error) {
       this.error.set(error instanceof Error ? error.message : 'Impossible de rejoindre le jeu.');
       this.isLoading.set(false);
@@ -196,7 +272,9 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
 
   private beginNewGame(): void {
     this.stopObservationTimer();
+    this.stopRenderLoop();
     this.model = this.portraitService.generateModel();
+    this.loadedModelGeneratedAt = null;
     const seats = this.players().map((player) => player.seat);
     this.turns = this.portraitService.createTurnSequence(this.model, seats);
     this.turnIndex = 0;
@@ -204,37 +282,28 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
     this.pendingX = null;
     this.movementStartedAt = Date.now();
     this.revision += 1;
-    this.phase.set('observation');
+    this.assetsReadyRevision = -1;
+    this.readySeats.clear();
+    this.phase.set('preparation');
     this.observationSeconds.set(OBSERVATION_SECONDS);
     this.score.set(0);
     this.updateInterface();
     this.broadcastState();
-
-    this.observationTimer = setInterval(() => {
-      const remaining = this.observationSeconds() - 1;
-      this.observationSeconds.set(remaining);
-      this.broadcastState();
-      if (remaining <= 0) {
-        if (this.observationTimer) clearInterval(this.observationTimer);
-        this.observationTimer = null;
-        this.phase.set('reproduction');
-        this.turnIndex = 0;
-        this.pendingX = null;
-        this.movementStartedAt = Date.now();
-        this.updateInterface();
-        this.broadcastState();
-      }
-    }, 1000);
+    this.drawCanvasNow();
+    void this.prepareModel(this.revision);
   }
 
   private finishGame(): void {
     if (!this.model) return;
     this.stopObservationTimer();
+    this.stopRenderLoop();
     this.phase.set('results');
     const finalScore = this.portraitService.calculateScore(this.model, this.placements);
     this.score.set(finalScore);
+    this.revision += 1;
     this.updateInterface();
     this.broadcastState();
+    this.drawCanvasNow();
   }
 
   private updateInterface(): void {
@@ -252,31 +321,112 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
     if (!payload || typeof payload !== 'object') return;
     const broadcast = payload as PortraitBroadcast;
     if (broadcast.type === 'request-state') {
-      if (this.isHost() && this.model) this.broadcastState();
+      if (this.isHost() && this.model) this.broadcastState(false);
+      return;
+    }
+    if (broadcast.type === 'assets-ready') {
+      if (
+        !this.isHost()
+        || broadcast.revision !== this.revision
+        || typeof broadcast.seat !== 'number'
+        || !this.players().some((player) => player.seat === broadcast.seat)
+      ) return;
+      this.readySeats.add(broadcast.seat);
+      this.startObservationWhenReady();
       return;
     }
     if (broadcast.type !== 'state' || !broadcast.state) return;
     const state = broadcast.state;
     if (state.revision < this.revision) return;
-
-    this.revision = state.revision;
-    this.phase.set(state.phase);
-    this.model = state.model;
-    this.turns = state.turns;
-    this.turnIndex = state.turnIndex;
-    this.placements = state.placements;
-    this.observationSeconds.set(state.observationSeconds);
-    this.score.set(state.score);
-    this.movementStartedAt = state.movementStartedAt;
-    this.pendingX = state.pendingX;
-    this.movingX = state.movingX;
-    this.movingY = state.movingY;
-    this.updateInterface();
-
-    if (!this.isHost() && state.phase === 'observation') this.stopObservationTimer();
+    const shouldPersist = this.isHost() && state.revision > this.revision;
+    this.applyStoredState(state);
+    if (shouldPersist) this.broadcastState();
+    if (state.phase === 'preparation') void this.prepareModel(state.revision);
+    else if (state.phase === 'observation') this.startServerClock();
+    else this.stopObservationTimer();
   }
 
-  private broadcastState(): void {
+  private async prepareModel(revision: number): Promise<void> {
+    const model = this.model;
+    if (!model || revision !== this.revision) return;
+    if (this.assetsReadyRevision === revision) {
+      this.sendAssetsReady(revision);
+      return;
+    }
+
+    if (this.loadedModelGeneratedAt === model.generatedAt) {
+      this.assetsReadyRevision = revision;
+      this.sendAssetsReady(revision);
+      return;
+    }
+    if (this.loadingModelGeneratedAt === model.generatedAt) return;
+
+    this.loadingModelGeneratedAt = model.generatedAt;
+    try {
+      await Promise.all(model.elements.map((element) => this.getImage(element.svg).decode()));
+      if (revision !== this.revision || this.model?.generatedAt !== model.generatedAt) return;
+      this.loadedModelGeneratedAt = model.generatedAt;
+      this.assetsReadyRevision = revision;
+      this.drawCanvasNow();
+      this.sendAssetsReady(revision);
+    } catch (error) {
+      if (revision === this.revision) {
+        this.error.set(error instanceof Error ? error.message : 'Impossible de charger le portrait.');
+      }
+    } finally {
+      if (this.loadingModelGeneratedAt === model.generatedAt) this.loadingModelGeneratedAt = null;
+    }
+  }
+
+  private async loadModelForRendering(revision: number): Promise<void> {
+    const model = this.model;
+    if (!model || this.loadedModelGeneratedAt === model.generatedAt || this.loadingModelGeneratedAt === model.generatedAt) return;
+    this.loadingModelGeneratedAt = model.generatedAt;
+    try {
+      await Promise.all(model.elements.map((element) => this.getImage(element.svg).decode()));
+      if (revision === this.revision && this.model?.generatedAt === model.generatedAt) {
+        this.loadedModelGeneratedAt = model.generatedAt;
+        this.drawCanvasNow();
+      }
+    } catch (error) {
+      if (revision === this.revision) {
+        this.error.set(error instanceof Error ? error.message : 'Impossible de charger le portrait.');
+      }
+    } finally {
+      if (this.loadingModelGeneratedAt === model.generatedAt) this.loadingModelGeneratedAt = null;
+    }
+  }
+
+  private sendAssetsReady(revision: number): void {
+    if (this.isHost()) {
+      this.readySeats.add(this.mySeat);
+      this.startObservationWhenReady();
+    } else {
+      void this.channel?.send({
+        type: 'broadcast',
+        event: 'portrait',
+        payload: { type: 'assets-ready', seat: this.mySeat, revision },
+      });
+    }
+  }
+
+  private startObservationWhenReady(): void {
+    if (
+      !this.isHost()
+      || this.phase() !== 'preparation'
+      || !this.players().every((player) => this.readySeats.has(player.seat))
+    ) return;
+
+    this.phase.set('observation');
+    this.observationSeconds.set(OBSERVATION_SECONDS);
+    this.movementStartedAt = Date.now();
+    this.revision += 1;
+    this.updateInterface();
+    this.broadcastState();
+    this.drawCanvasNow();
+  }
+
+  private broadcastState(persist = true): void {
     if (!this.channel) return;
     const state: PortraitGameState = {
       phase: this.phase(),
@@ -292,18 +442,113 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
       movingX: this.movingX,
       movingY: this.movingY,
     };
-    void this.channel.send({ type: 'broadcast', event: 'portrait', payload: { type: 'state', seat: this.mySeat, state } });
+    if (this.isHost() && persist) {
+      const token = this.roomService.readToken(this.roomCode());
+      if (!token) {
+        this.error.set('Votre session de salle est introuvable.');
+        return;
+      }
+      void (async () => {
+        try {
+          const { data, error } = await this.supabase.rpc('save_portrait_game_state', {
+            p_code: this.roomCode(),
+            p_token: token,
+            p_state: state,
+          });
+          if (error) {
+            this.error.set(error.message || 'Impossible d’enregistrer l’état du portrait.');
+            return;
+          }
+          const result = Array.isArray(data) ? data[0] : data;
+          if (!isRecord(result) || result['success'] !== true) {
+            this.error.set(
+              isRecord(result) && typeof result['message'] === 'string'
+                ? result['message']
+                : 'Impossible d’enregistrer l’état du portrait.',
+            );
+            return;
+          }
+          this.sendState(state);
+          if (state.phase === 'observation' && this.revision === state.revision) {
+            this.startServerClock();
+          }
+        } catch (error) {
+          this.error.set(error instanceof Error ? error.message : 'Impossible d’enregistrer l’état du portrait.');
+        }
+      })();
+      return;
+    }
+    this.sendState(state);
+  }
+
+  private sendState(state: PortraitGameState): void {
+    void this.channel?.send({
+      type: 'broadcast',
+      event: 'portrait',
+      payload: { type: 'state', seat: this.mySeat, state },
+    });
   }
 
   private stopTimers(): void {
     this.stopObservationTimer();
-    if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
-    this.animationFrame = 0;
+    this.stopRenderLoop();
   }
 
   private stopObservationTimer(): void {
     if (this.observationTimer) clearInterval(this.observationTimer);
     this.observationTimer = null;
+  }
+
+  private startServerClock(): void {
+    if (this.observationTimer) return;
+    this.observationTimer = setInterval(() => void this.tickServerState(), 1_000);
+  }
+
+  private async tickServerState(): Promise<void> {
+    const token = this.roomService.readToken(this.roomCode());
+    if (!token) return;
+    const { data, error } = await this.supabase.rpc('tick_portrait_game_state', {
+      p_code: this.roomCode(),
+      p_token: token,
+    });
+    if (error) {
+      this.error.set(error.message || 'Impossible de mettre à jour le minuteur du portrait.');
+      return;
+    }
+    const state = parsePortraitGameState(data);
+    if (!state || state.revision <= this.revision) return;
+    this.applyStoredState(state);
+    if (state.phase === 'observation') this.startServerClock();
+    else {
+      this.stopObservationTimer();
+      this.broadcastState(false);
+    }
+  }
+
+  private applyStoredState(state: PortraitGameState): void {
+    if (this.model?.generatedAt !== (state.model?.generatedAt ?? null)) {
+      this.loadedModelGeneratedAt = null;
+      this.loadingModelGeneratedAt = null;
+      this.assetsReadyRevision = -1;
+      this.readySeats.clear();
+    }
+    this.revision = state.revision;
+    this.phase.set(state.phase);
+    this.model = state.model;
+    this.turns = state.turns;
+    this.turnIndex = state.turnIndex;
+    this.placements = state.placements;
+    this.observationSeconds.set(state.observationSeconds);
+    this.score.set(state.score);
+    this.movementStartedAt = state.movementStartedAt;
+    this.pendingX = state.pendingX;
+    this.movingX = state.movingX;
+    this.movingY = state.movingY;
+    this.updateInterface();
+    this.drawCanvasNow();
+    if (state.phase !== 'preparation') void this.loadModelForRendering(state.revision);
+    if (state.phase === 'reproduction') this.startRenderLoop();
+    else this.stopRenderLoop();
   }
 
   private drawFrame(time: number): void {
@@ -314,11 +559,30 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
       this.updateMovingPosition(delta);
       this.drawCanvas(canvas);
     }
+    if (this.phase() === 'reproduction') {
+      this.animationFrame = requestAnimationFrame((nextTime) => this.drawFrame(nextTime));
+    } else {
+      this.animationFrame = 0;
+    }
+  }
+
+  private startRenderLoop(): void {
+    if (this.phase() !== 'reproduction' || this.animationFrame !== 0) return;
+    this.lastFrameTime = 0;
+    this.animationFrame = requestAnimationFrame((time) => this.drawFrame(time));
+  }
+
+  private stopRenderLoop(): void {
+    if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
+    this.animationFrame = 0;
+  }
+
+  private drawCanvasNow(): void {
+    if (this.canvasRef?.nativeElement) this.drawCanvas(this.canvasRef.nativeElement);
     if (this.phase() === 'results') {
       if (this.modelCanvasRef?.nativeElement) this.drawCanvas(this.modelCanvasRef.nativeElement, true);
       if (this.reconstructedCanvasRef?.nativeElement) this.drawCanvas(this.reconstructedCanvasRef.nativeElement, false);
     }
-    this.animationFrame = requestAnimationFrame((nextTime) => this.drawFrame(nextTime));
   }
 
   private updateMovingPosition(delta: number): void {
@@ -384,9 +648,17 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
     const width = element.width * CANVAS_WIDTH;
     const height = element.height * CANVAS_HEIGHT;
     const image = this.getImage(element.svg);
-    if (image.complete) {
+    if (image.complete && image.naturalWidth > 0) {
       context.drawImage(image, position.x * CANVAS_WIDTH - width / 2, position.y * CANVAS_HEIGHT - height / 2, width, height);
     }
+  }
+
+  private configureCanvas(canvas: HTMLCanvasElement | undefined): void {
+    if (!canvas) return;
+    const devicePixelRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    canvas.width = Math.round(CANVAS_WIDTH * devicePixelRatio);
+    canvas.height = Math.round(CANVAS_HEIGHT * devicePixelRatio);
+    canvas.getContext('2d')?.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   }
 
   private getImage(svg: string): HTMLImageElement {
@@ -397,4 +669,67 @@ export class PortraitGame implements AfterViewInit, OnDestroy {
     this.imageCache.set(svg, image);
     return image;
   }
+}
+
+function parsePortraitGameState(value: unknown): PortraitGameState | null {
+  if (!isRecord(value)) return null;
+  const phase = value['phase'];
+  if (
+    phase !== 'preparation'
+    && phase !== 'observation'
+    && phase !== 'reproduction'
+    && phase !== 'results'
+  ) return null;
+  if (
+    !Number.isInteger(value['revision'])
+    || typeof value['observationSeconds'] !== 'number'
+    || typeof value['score'] !== 'number'
+    || typeof value['movementStartedAt'] !== 'number'
+    || typeof value['movingX'] !== 'number'
+    || typeof value['movingY'] !== 'number'
+    || !isRecord(value['placements'])
+    || !Array.isArray(value['turns'])
+    || typeof value['turnIndex'] !== 'number'
+  ) return null;
+  if (
+    value['pendingX'] !== null
+    && typeof value['pendingX'] !== 'number'
+  ) return null;
+
+  const model = value['model'];
+  if (model !== null && (!isRecord(model) || !Array.isArray(model['elements']))) return null;
+  if (model !== null) {
+    const elements = model['elements'];
+    if (!Array.isArray(elements)) return null;
+    const elementsValid = elements.every((element: unknown) => {
+      if (!isRecord(element)) return false;
+      return typeof element['id'] === 'string'
+        && typeof element['svg'] === 'string'
+        && typeof element['width'] === 'number'
+        && typeof element['height'] === 'number'
+        && isRecord(element['target'])
+        && typeof element['target']['x'] === 'number'
+        && typeof element['target']['y'] === 'number';
+    });
+    if (!elementsValid) return null;
+  }
+  const turnsValid = value['turns'].every((turn) => {
+    if (!isRecord(turn)) return false;
+    return typeof turn['seat'] === 'number'
+      && typeof turn['elementId'] === 'string'
+      && (turn['step'] === 'x' || turn['step'] === 'y');
+  });
+  if (!turnsValid) return null;
+  const placementsValid = Object.values(value['placements']).every((placement) =>
+    isRecord(placement)
+    && typeof placement['x'] === 'number'
+    && typeof placement['y'] === 'number'
+  );
+  if (!placementsValid) return null;
+
+  return value as unknown as PortraitGameState;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }

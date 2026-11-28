@@ -10,3 +10,4 @@ input { min-width: 0; flex: 1; border: 1px solid var(--color-border); border-rad
 button { border: 0; border-radius: 10px; padding: 8px 14px; background: var(--color-primary); color: white; font: inherit; font-weight: 800; cursor: pointer; }
 button:disabled { opacity: .55; cursor: not-allowed; }
 .chat-hint { margin: 8px 0 0; }
+input:disabled { background: color-mix(in srgb, var(--color-border) 35%, var(--color-surface)); cursor: not-allowed; }

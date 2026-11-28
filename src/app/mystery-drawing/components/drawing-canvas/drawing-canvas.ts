@@ -76,9 +76,11 @@ export class DrawingCanvas implements AfterViewInit, OnChanges {
 
   ngAfterViewInit(): void {
     const canvas = this.canvasRef.nativeElement;
-    canvas.width = CANVAS_WIDTH;
-    canvas.height = CANVAS_HEIGHT;
+    const devicePixelRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+    canvas.width = Math.round(CANVAS_WIDTH * devicePixelRatio);
+    canvas.height = Math.round(CANVAS_HEIGHT * devicePixelRatio);
     this.context = canvas.getContext('2d');
+    this.context?.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
     if (!this.context) return;
     this.clearSurface();
     this.syncEvents(true);

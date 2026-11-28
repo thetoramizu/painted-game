@@ -35,40 +35,22 @@ export class Game implements AfterViewInit, OnDestroy {
 
   protected readonly roomCode = signal('');
   protected readonly rolling = signal(false);
+  protected readonly launching = signal(false);
+  protected readonly restarting = signal(false);
+  protected readonly returning = signal(false);
+  protected readonly actionError = signal<string | null>(null);
   protected readonly lastRoll = signal<{ roll: number; useJog: boolean } | null>(null);
 
   private game?: Phaser.Game;
   private scene?: GameScene;
   private syncBoardEffect?: EffectRef;
-  private raceEffect?: EffectRef;
-  private roomPickSubscription?: (() => void)[];
+  private destroyed = false;
+  private turnAnimationTimeout: ReturnType<typeof setTimeout> | null = null;
 
   ngAfterViewInit(): void {
     const code = this.route.snapshot.paramMap.get('code') ?? '';
     this.roomCode.set(code);
-
-    // Si on arrive directement sur /jouer sans passer par le lobby,
-    // recharger les joueurs et le siège du joueur courant depuis la salle.
-    if (!this.raceService.setup()) {
-      const cached = this.readCachedSnapshot(code);
-      if (cached && cached.players.length >= 2) {
-        this.raceService.startSetup(code, cached.players, cached.mySeat);
-      } else {
-        // Cache invalide ou absent : recharger la salle depuis Supabase.
-        const pseudo = this.roomService.readPseudo(code);
-        if (!pseudo) return; // ou throw
-        this.roomService.getRoom(code, pseudo).then((snapshot) => {
-          if (snapshot.players.length >= 2) {
-            this.raceService.startSetup(code, snapshot.players, snapshot.mySeat);
-          }
-        }).catch(() => {
-          // Si la récupération échoue, l'utilisateur verra le message d'erreur.
-        });
-      }
-    }
-
-    // Écouter les choix des autres joueurs en temps réel
-    this.raceService.subscribeToRoomPicks(code);
+    void this.initializeRace(code);
 
     // Surveiller l'apparition d'une course pour créer le canvas Phaser,
     // et le détruire si la course s'arrête.
@@ -86,36 +68,6 @@ export class Game implements AfterViewInit, OnDestroy {
       }
     }, { injector: this.injector });
 
-    // Vérifier si on doit être redirigé vers l'écran choix (quand l'hôte démarre la partie)
-    // Cela aide les joueurs qui sont restés sur le lobby à être redirigés vers le jeu
-    effect(() => {
-      // Attendre que setup() soit défini
-      console.log('[game] effect déclenché, setup défini ?', !!this.raceService.setup());
-      if (!this.raceService.setup()) return;
-
-      const setup = this.raceService.setup();
-      console.log('[game] setup trouvé, players.length:', setup?.players?.length);
-      if (!setup || setup.players.length < 2) return;
-
-      // Si on est toujours sur une route sans '/jouer' et que la partie a commencé,
-      // rediriger vers l'écran choix d'athlète
-      // Cela concerne les joueurs sur /salon/:code (lobby) alors que l'hôte est sur /salon/:code/jouer
-      const currentUrl = this.router.url;
-      console.log(`[game] Vérification redirection - URL actuelle: "${currentUrl}"`);
-      console.log('[game] currentUrl includes /jouer ?', currentUrl.includes('/jouer'));
-      if (!currentUrl.includes('/jouer')) {
-        console.log(`[game] Redirection vers jeu : ${setup.players.length} joueurs, siège: ${this.raceService.mySeat()}`);
-        // Navigation versatile - essayer plusieurs patterns de route
-        const code = this.route.snapshot.paramMap.get('code') ?? '';
-        console.log('[game] code de salle:', code);
-        this.router.navigate(['/salon', code, 'jouer']).then(() => {
-          console.log('[game] Redirection réussie');
-        }).catch((e) => {
-          console.error('[game] Erreur redirection', e);
-        });
-      }
-    }, { injector: this.injector });
-
     // Synchroniser le canvas dès que la course est en cours.
     this.syncBoardEffect = effect(
       () => {
@@ -128,15 +80,17 @@ export class Game implements AfterViewInit, OnDestroy {
     );
 
     this.destroyRef.onDestroy(() => {
-      this.raceEffect?.destroy();
       this.syncBoardEffect?.destroy();
-      this.roomPickSubscription?.forEach((unsub) => unsub());
       this.cleanupPhaser();
     });
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
+    if (this.turnAnimationTimeout) clearTimeout(this.turnAnimationTimeout);
+    this.turnAnimationTimeout = null;
     this.raceService.unsubscribeFromRoomPicks();
+    this.raceService.unsubscribeFromRace();
     this.game?.destroy(true);
     this.game = undefined;
     this.scene = undefined;
@@ -150,12 +104,26 @@ export class Game implements AfterViewInit, OnDestroy {
     return this.raceService.pickFor(this.raceService.mySeat());
   }
 
-  protected pick(id: AthleteId): void {
-    this.raceService.selectAthlete(id);
+  protected async pick(id: AthleteId): Promise<void> {
+    this.actionError.set(null);
+    try {
+      await this.raceService.selectAthlete(id);
+    } catch (error) {
+      this.actionError.set(error instanceof Error ? error.message : 'Impossible d’enregistrer ce choix.');
+    }
   }
 
-  protected launch(): void {
-    this.raceService.launchRace();
+  protected async launch(): Promise<void> {
+    if (this.launching()) return;
+    this.launching.set(true);
+    this.actionError.set(null);
+    try {
+      await this.raceService.launchRace();
+    } catch (error) {
+      this.actionError.set(error instanceof Error ? error.message : 'Impossible de lancer la course.');
+    } finally {
+      this.launching.set(false);
+    }
   }
 
   protected isMyTurn(): boolean {
@@ -170,43 +138,27 @@ export class Game implements AfterViewInit, OnDestroy {
     await this.takeTurn(true);
   }
 
-  private takeTurn(useJog: boolean): Promise<void> {
-    if (this.rolling()) return Promise.resolve();
-    return new Promise((resolve) => {
-      this.rolling.set(true);
-
-      // Démarrer l'animation du dé immédiatement (faces qui tournent)
-      this.scene?.animateRoll(1);
-
-      setTimeout(() => {
-        const result = this.raceService.playMyTurn(useJog);
-        if (result) {
-          this.lastRoll.set(result);
-          // Retomber sur le résultat du dé une fois le tirage effectué
-          this.scene?.setDieFace(result.roll);
-        }
-        this.rolling.set(false);
-        // Faire jouer automatiquement les tours des autres joueurs (P1 local).
-        this.scheduleBotTurns();
-        resolve();
-      }, 500);
-    });
-  }
-
-  private scheduleBotTurns(): void {
-    const race = this.raceService.race();
-    if (!race || race.phase !== 'playing') return;
-    if (race.turnSeat === this.raceService.mySeat()) return;
-    setTimeout(() => {
-      let current = this.raceService.race();
-      while (current && current.phase === 'playing' && current.turnSeat !== this.raceService.mySeat()) {
-        const seat = current.turnSeat;
-        const result = this.raceService.playTurnWithRoll(seat);
-        if (!result) break;
-        this.lastRoll.set({ ...result });
-        current = this.raceService.race();
-      }
-    }, 900);
+  private async takeTurn(useJog: boolean): Promise<void> {
+    if (this.rolling()) return;
+    this.rolling.set(true);
+    this.actionError.set(null);
+    this.scene?.animateRoll(1);
+    try {
+      await new Promise<void>((resolve) => {
+        this.turnAnimationTimeout = setTimeout(() => {
+          this.turnAnimationTimeout = null;
+          resolve();
+        }, 500);
+      });
+      if (this.destroyed) return;
+      const result = await this.raceService.playMyTurn(useJog);
+      this.lastRoll.set(result);
+      this.scene?.setDieFace(result.roll);
+    } catch (error) {
+      this.actionError.set(error instanceof Error ? error.message : 'Impossible de jouer ce tour.');
+    } finally {
+      this.rolling.set(false);
+    }
   }
 
   protected lastRollLabel(): string | null {
@@ -248,6 +200,41 @@ export class Game implements AfterViewInit, OnDestroy {
     this.raceService.clear();
   }
 
+  protected async restartRace(): Promise<void> {
+    if (this.restarting()) return;
+    this.restarting.set(true);
+    this.actionError.set(null);
+    try {
+      await this.raceService.restartRace();
+    } catch (error) {
+      this.actionError.set(error instanceof Error ? error.message : 'Impossible de relancer la course.');
+    } finally {
+      this.restarting.set(false);
+    }
+  }
+
+  protected async returnToLobby(): Promise<void> {
+    if (this.returning()) return;
+    const code = this.roomCode();
+    const token = this.roomService.readToken(code);
+    if (!code || !token) return;
+    this.returning.set(true);
+    this.actionError.set(null);
+    try {
+      await this.roomService.finishRoomGame(code, token);
+      await this.router.navigate(['/salon', code]);
+    } catch (error) {
+      this.actionError.set(error instanceof Error ? error.message : 'Impossible de retourner au salon.');
+    } finally {
+      this.returning.set(false);
+    }
+  }
+
+  protected async returnToLobbyAsPlayer(): Promise<void> {
+    const code = this.roomCode();
+    if (code) await this.router.navigate(['/salon', code]);
+  }
+
   private syncBoard(): void {
     const race = this.raceService.race();
     if (!race || !this.scene) return;
@@ -261,18 +248,28 @@ export class Game implements AfterViewInit, OnDestroy {
     this.scene.syncRacers(trackRacers, turnSeat, this.statusMessage());
   }
 
-  private readCachedSnapshot(code: string): { players: { seat: number; pseudo: string }[]; mySeat: number } | null {
+  private async initializeRace(code: string): Promise<void> {
+    const token = this.roomService.readToken(code);
+    if (!code || !token) {
+      this.actionError.set('Votre session de salle est introuvable.');
+      return;
+    }
     try {
-      const raw = localStorage.getItem(`athletes-room-snapshot:${code}`);
-      if (!raw) return null;
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { players?: unknown }).players)) {
-        const snapshot = parsed as { players: { seat: number; pseudo: string }[]; mySeat: number };
-        return { players: snapshot.players, mySeat: snapshot.mySeat };
+      const snapshot = await this.roomService.getRoom(code, token);
+      if (snapshot.gameType !== 'athletes' || snapshot.status !== 'playing') {
+        await this.router.navigate(['/salon', code]);
+        return;
       }
-      return null;
-    } catch {
-      return null;
+      await this.raceService.startSetup(
+        code,
+        snapshot.players.map((player) => ({ seat: player.seat, pseudo: player.pseudo })),
+        snapshot.mySeat,
+      );
+      this.raceService.subscribeToRoomPicks(code);
+      await this.raceService.subscribeToRace(code);
+      await this.raceService.loadRace(code, token);
+    } catch (error) {
+      this.actionError.set(error instanceof Error ? error.message : 'Impossible de charger la course.');
     }
   }
 
@@ -295,6 +292,7 @@ export class Game implements AfterViewInit, OnDestroy {
 
   private cleanupPhaser(): void {
     if (this.game) {
+      this.scene?.shutdown();
       this.game.destroy(true);
       this.game = undefined;
       this.scene = undefined;

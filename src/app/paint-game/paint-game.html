@@ -75,7 +75,7 @@
       <div class="canvas-heading">
         <h2>{{ phase() === 'results' ? 'Reproduction commune' : 'Votre toile commune' }}</h2>
         @if (phase() === 'painting') {
-          <p>Maintenez le clic et déplacez la bombe pour pulvériser la peinture.</p>
+          <p>Maintenez le clic et déplacez l’outil pour étendre la peinture.</p>
         }
       </div>
       <canvas
@@ -97,13 +97,27 @@
     <section class="results-card" aria-live="polite" [hidden]="isLoading()">
       <div class="score-ring"><strong>{{ score() }}%</strong><span>ressemblance collective</span></div>
       @if (isHost()) {
-        <button
-          class="finish-button"
-          type="button"
-          [disabled]="isReturning()"
-          (click)="returnToLobby()"
-        >
-          {{ isReturning() ? 'Retour au salon…' : 'Retourner au salon' }}
+        <div class="results-actions">
+          <button
+            class="finish-button replay-button"
+            type="button"
+            [disabled]="isRestarting() || isReturning()"
+            (click)="restartGame()"
+          >
+            {{ isRestarting() ? 'Relance…' : 'Rejouer' }}
+          </button>
+          <button
+            class="finish-button"
+            type="button"
+            [disabled]="isReturning() || isRestarting()"
+            (click)="returnToLobby()"
+          >
+            {{ isReturning() ? 'Retour au salon…' : 'Retourner au salon' }}
+          </button>
+        </div>
+      } @else {
+        <button class="finish-button" type="button" (click)="returnToLobbyAsPlayer()">
+          Retourner au salon
         </button>
       }
     </section>

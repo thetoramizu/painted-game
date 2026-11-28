@@ -9,6 +9,7 @@ button:not(:disabled) { cursor: pointer; }
 .color-swatch { width: 26px; height: 26px; min-height: 26px; padding: 0; border-radius: 50%; }
 .color-swatch.selected { outline: 3px solid var(--color-primary); outline-offset: 2px; }
 .custom-color { position: relative; display: grid; width: 28px; height: 28px; place-items: center; border: 1px dashed var(--color-muted); border-radius: 50%; cursor: pointer; }
+.custom-color.disabled { opacity: .58; cursor: not-allowed; }
 .custom-color input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .size-picker { display: flex; align-items: center; gap: 6px; color: var(--color-muted); font-size: 13px; font-weight: 700; }
 .history-tools { margin-left: auto; }

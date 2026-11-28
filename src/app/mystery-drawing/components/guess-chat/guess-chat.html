@@ -16,9 +16,10 @@
       name="guess"
       maxlength="80"
       autocomplete="off"
+      aria-label="Votre proposition"
       placeholder="Votre proposition…"
       [disabled]="disabled || found || drawer"
-      [(value)]="answer"
+      [value]="answer"
       (input)="answer = $any($event.target).value"
     />
     <button type="submit" [disabled]="disabled || found || drawer || !answer.trim()">Envoyer</button>

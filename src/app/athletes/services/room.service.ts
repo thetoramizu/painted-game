@@ -76,8 +76,8 @@ export class RoomService {
     return this.rpc<RoomSession>('join_room', { p_code: code, p_pseudo: pseudo }, isRoomSession);
   }
 
-  async getRoom(code: string, pseudo: string): Promise<RoomSnapshot> {
-    const snapshot = await this.rpc<RoomSnapshot>('get_room', { p_code: code, p_pseudo: pseudo }, isRoomSnapshot);
+  async getRoom(code: string, token: string): Promise<RoomSnapshot> {
+    const snapshot = await this.rpc<RoomSnapshot>('get_room', { p_code: code, p_token: token }, isRoomSnapshot);
     this.snapshotSignal.set(snapshot);
     try {
       localStorage.setItem(SNAPSHOT_KEY_PREFIX + code, JSON.stringify(snapshot));
@@ -88,21 +88,35 @@ export class RoomService {
   }
 
   /** Récupérer les choix d'athlètes enregistrés pour une salle (par siège). */
-  getPicks(code: string): Promise<{ seat: number; athlete_id: string }[]> {
-    return this.rpc('get_picks', { p_code: code }, (data): data is { seat: number; athlete_id: string }[] => {
-      return Array.isArray(data);
-    }, true); // expectArray = true : on retourne le tableau complet
+  getPicks(code: string): Promise<{ seat: number; athlete_id: string | null }[]> {
+    return this.rpc(
+      'get_picks',
+      { p_code: code },
+      (data): data is { seat: number; athlete_id: string | null }[] =>
+        Array.isArray(data) &&
+        data.every((row) =>
+          isRecord(row) &&
+          typeof row['seat'] === 'number' &&
+          (typeof row['athlete_id'] === 'string' || row['athlete_id'] === null),
+        ),
+      true,
+    );
   }
 
   /** Enregistrer le choix d'un athlète pour un joueur (synchrone, via RPC). */
-  updatePick(code: string, seat: number, athleteId: string): Promise<void> {
-    return this.rpc('set_pick', { p_code: code, p_seat: seat, p_athlete_id: athleteId }, () => true);
+  async updatePick(code: string, token: string, seat: number, athleteId: string): Promise<void> {
+    const result = await this.rpc<{ success: boolean; message: string }>(
+      'set_pick',
+      { p_code: code, p_token: token, p_seat: seat, p_athlete_id: athleteId },
+      isStartRoom,
+    );
+    if (!result.success) throw new Error(result.message);
   }
 
-  async updateGameType(code: string, pseudo: string, gameType: GameType): Promise<void> {
+  async updateGameType(code: string, token: string, gameType: GameType): Promise<void> {
     const result = await this.rpc<{ success: boolean; message: string }>(
       'set_room_game',
-      { p_code: code, p_pseudo: pseudo, p_game_type: gameType },
+      { p_code: code, p_token: token, p_game_type: gameType },
       isStartRoom
     );
     if (!result.success) throw new Error(result.message);
@@ -181,21 +195,18 @@ export class RoomService {
 
 
       // ← AJOUT : Souscrire au channel pour activer les événements en temps réel
-      channel.subscribe((status) => {
-        // eslint-disable-next-line no-console
-        console.log(`[roomService] channel status for room-${code}: ${status}`);
-      });
+      channel.subscribe();
       return () => {
-        try {
-          channel.unsubscribe();
-        } catch {
-          // Déjà désinscrit
-        }
+        void this.supabase.removeChannel(channel);
       };
     }
 
-  startRoom(code: string, pseudo: string): Promise<{ success: boolean; message: string }> {
-    return this.rpc<{ success: boolean; message: string }>('start_room', { p_code: code, p_pseudo: pseudo }, isStartRoom);
+  startRoom(code: string, token: string): Promise<{ success: boolean; message: string }> {
+    return this.rpc<{ success: boolean; message: string }>(
+      'start_room',
+      { p_code: code, p_token: token },
+      isStartRoom,
+    );
   }
 
   startMysteryGame(code: string, token: string): Promise<{ success: boolean; message: string }> {
@@ -206,10 +217,19 @@ export class RoomService {
     );
   }
 
-  async finishPaintGame(code: string, pseudo: string): Promise<void> {
+  async finishPaintGame(code: string, token: string): Promise<void> {
     const result = await this.rpc<{ success: boolean; message: string }>(
       'finish_paint_game',
-      { p_code: code, p_pseudo: pseudo },
+      { p_code: code, p_token: token },
+      isStartRoom
+    );
+    if (!result.success) throw new Error(result.message);
+  }
+
+  async finishRoomGame(code: string, token: string): Promise<void> {
+    const result = await this.rpc<{ success: boolean; message: string }>(
+      'finish_room_game',
+      { p_code: code, p_token: token },
       isStartRoom
     );
     if (!result.success) throw new Error(result.message);
@@ -246,13 +266,6 @@ export class RoomService {
     if (current?.code === code) this.snapshotSignal.set({ ...current, gameType });
   }
 
-  savePseudo(code: string, pseudo: string): void {
-    localStorage.setItem(TOKEN_KEY_PREFIX + code + ':pseudo', pseudo);
-  }
-
-  readPseudo(code: string): string | null {
-    return localStorage.getItem(TOKEN_KEY_PREFIX + code + ':pseudo');
-  }
 }
 
 function isRoomSession(data: unknown): data is RoomSession {

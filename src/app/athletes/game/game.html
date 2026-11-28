@@ -1,4 +1,7 @@
 <main class="race">
+  @if (actionError()) {
+    <p class="message-card" role="alert">{{ actionError() }}</p>
+  }
   @if (raceService.setup(); as setup) {
     @if (setup.phase === 'setup') {
       <header class="race-header">
@@ -36,8 +39,12 @@
       </section>
 
       <div class="action-bar">
-        @if (raceService.allPicked()) {
-          <button type="button" class="btn btn-primary" (click)="launch()">Lancer la course</button>
+        @if (raceService.allPicked() && mySeat() === 0) {
+          <button type="button" class="btn btn-primary" [disabled]="launching()" (click)="launch()">
+            {{ launching() ? 'Lancement…' : 'Lancer la course' }}
+          </button>
+        } @else if (raceService.allPicked()) {
+          <p class="hint">Tous les athlètes sont choisis. En attente du chef de salle…</p>
         } @else {
           <p class="hint">Sélectionne un athlète pour continuer.</p>
         }
@@ -92,7 +99,18 @@
           @if (race.phase === 'finished') {
             <div class="finish-card">
               <h2>Course terminée !</h2>
-              <a routerLink="/" class="btn btn-primary" (click)="backHome()">Retour à l'accueil</a>
+              @if (mySeat() === 0) {
+                <button type="button" class="btn btn-secondary" [disabled]="restarting() || returning()" (click)="restartRace()">
+                  {{ restarting() ? 'Relance…' : 'Rejouer' }}
+                </button>
+                <button type="button" class="btn btn-primary" [disabled]="returning() || restarting()" (click)="returnToLobby()">
+                  {{ returning() ? 'Retour au salon…' : 'Retourner au salon' }}
+                </button>
+              } @else {
+                <button type="button" class="btn btn-primary" (click)="returnToLobbyAsPlayer()">
+                  Retourner au salon
+                </button>
+              }
             </div>
           }
         </aside>

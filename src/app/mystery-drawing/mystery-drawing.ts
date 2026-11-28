@@ -105,6 +105,7 @@ export class MysteryDrawing implements OnInit, OnDestroy {
   }
 
   protected async leaveGame(): Promise<void> {
+    if (!window.confirm('Quitter la partie ? Vous pourrez revenir tant que la partie est en cours.')) return;
     await this.router.navigate(['/salon', this.state()?.roomCode ?? '']);
   }
 
@@ -119,6 +120,24 @@ export class MysteryDrawing implements OnInit, OnDestroy {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  protected async restartGame(): Promise<void> {
+    if (!this.isHost() || this.busy()) return;
+    this.busy.set(true);
+    this.error.set(null);
+    try {
+      await this.gameService.restartGame();
+    } catch (error) {
+      this.showError(error, 'Impossible de relancer la partie.');
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected async returnToLobbyAsPlayer(): Promise<void> {
+    const code = this.state()?.roomCode;
+    if (code) await this.router.navigate(['/salon', code]);
   }
 
   private async initialize(): Promise<void> {
@@ -161,7 +180,7 @@ export class MysteryDrawing implements OnInit, OnDestroy {
           this.showError(error, 'Impossible de mettre à jour la manche.'),
         );
       }
-    }, 250);
+    }, 1000);
   }
 
   private showError(error: unknown, fallback: string): void {

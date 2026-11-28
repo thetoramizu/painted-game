@@ -30,11 +30,13 @@
         [style.backgroundColor]="color"
         [class.selected]="selectedColor === color"
         [attr.aria-label]="'Couleur ' + color"
+        [attr.aria-pressed]="selectedColor === color"
+        [attr.title]="'Couleur ' + color"
         [disabled]="disabled"
         (click)="colorChange.emit(color)"
       ></button>
     }
-    <label class="custom-color" title="Couleur personnalisée">
+    <label class="custom-color" title="Couleur personnalisée" [class.disabled]="disabled">
       <span>+</span>
       <input type="color" [value]="selectedColor" [disabled]="disabled" (input)="colorChange.emit($any($event.target).value)" />
     </label>

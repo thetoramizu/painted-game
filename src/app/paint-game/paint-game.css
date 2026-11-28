@@ -232,6 +232,18 @@ h1 {
   color: var(--color-muted);
 }
 
+.results-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.replay-button {
+  background: var(--color-accent);
+  color: var(--color-ink);
+}
+
 .toolbar {
   display: flex;
   align-items: center;

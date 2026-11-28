@@ -23,6 +23,10 @@
   margin-bottom: 16px;
 }
 
+.header-spacer {
+  width: 80px;
+}
+
 .eyebrow {
   display: inline-block;
   margin: 0;
@@ -143,6 +147,18 @@ h1 {
 .game-option {
   color: var(--color-ink);
   text-align: left;
+}
+
+.game-option[aria-pressed='true'] {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-surface));
+  box-shadow: 0 8px 20px rgb(31 29 43 / 0.08);
+}
+
+.game-option:focus-visible,
+.copy-icon-btn:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 3px;
   cursor: pointer;
 }
 
@@ -272,33 +288,6 @@ h1 {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-
-.btn {
-  display: inline-block;
-  padding: 12px 22px;
-  border: none;
-  border-radius: 999px;
-  font: inherit;
-  font-weight: 700;
-  text-decoration: none;
-  cursor: pointer;
-  transition: transform 0.15s ease, opacity 0.2s ease;
-}
-
-.btn:hover {
-  transform: translateY(-2px);
-}
-
-.btn-primary {
-  background: var(--color-primary);
-  color: #fff;
-}
-
-.btn-secondary {
-  background: var(--color-accent);
-  color: var(--color-ink);
-}
-
 .alert {
   margin: 0;
   padding: 12px 16px;
@@ -328,7 +317,28 @@ h1 {
 }
 
 @media (max-width: 720px) {
-  .seats {
+  .lobby {
+    padding: 32px 16px 72px;
+  }
+  .header-top {
+    gap: 8px;
+  }
+  .header-spacer {
+    display: none;
+  }
+  .code-card {
+    padding: 24px 16px;
+  }
+  .code-value {
+    font-size: clamp(36px, 12vw, 56px);
+  }
+  .seats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .seat {
+    min-width: 0;
+  }
+  .action-bar app-btn {
+    width: 100%;
   }
 }
